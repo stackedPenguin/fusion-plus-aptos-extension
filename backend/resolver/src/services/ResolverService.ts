@@ -35,10 +35,14 @@ export class ResolverService {
   private chainService: ChainService;
   private orderEngineUrl: string;
   private isProcessing: Set<string> = new Set();
+  private ethereumAddress: string;
+  private aptosAddress: string;
 
   constructor() {
     this.orderEngineUrl = process.env.ORDER_ENGINE_URL || 'http://localhost:3001';
     this.chainService = new ChainService();
+    this.ethereumAddress = process.env.ETHEREUM_RESOLVER_ADDRESS!;
+    this.aptosAddress = process.env.APTOS_RESOLVER_ADDRESS!;
     
     // Connect to order engine WebSocket
     this.socket = io(this.orderEngineUrl);
@@ -175,7 +179,7 @@ export class ResolverService {
     if (order.fromChain === 'ETHEREUM') {
       return await this.chainService.createEthereumEscrow(
         escrowId,
-        order.receiver,
+        this.ethereumAddress, // Resolver is beneficiary on source chain
         order.fromToken,
         order.fromAmount,
         secretHash,
@@ -186,7 +190,7 @@ export class ResolverService {
       // Aptos source chain
       return await this.chainService.createAptosEscrow(
         ethers.getBytes(escrowId),
-        order.receiver,
+        this.aptosAddress, // Resolver is beneficiary on source chain
         order.fromAmount,
         ethers.getBytes(secretHash),
         timelock,

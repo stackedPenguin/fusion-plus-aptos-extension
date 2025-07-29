@@ -44,19 +44,35 @@ contract FusionPlusEscrow {
         require(_timelock > block.timestamp, "Timelock must be in the future");
         require(msg.value > 0, "Safety deposit required");
 
-        IERC20(_token).transferFrom(msg.sender, address(this), _amount);
-
-        escrows[_escrowId] = Escrow({
-            depositor: msg.sender,
-            beneficiary: _beneficiary,
-            token: _token,
-            amount: _amount,
-            hashlock: _hashlock,
-            timelock: _timelock,
-            withdrawn: false,
-            refunded: false,
-            safetyDeposit: msg.value
-        });
+        if (_token == address(0)) {
+            // ETH transfer
+            require(msg.value >= _amount, "Insufficient ETH sent");
+            escrows[_escrowId] = Escrow({
+                depositor: msg.sender,
+                beneficiary: _beneficiary,
+                token: _token,
+                amount: _amount,
+                hashlock: _hashlock,
+                timelock: _timelock,
+                withdrawn: false,
+                refunded: false,
+                safetyDeposit: msg.value - _amount
+            });
+        } else {
+            // ERC20 transfer
+            IERC20(_token).transferFrom(msg.sender, address(this), _amount);
+            escrows[_escrowId] = Escrow({
+                depositor: msg.sender,
+                beneficiary: _beneficiary,
+                token: _token,
+                amount: _amount,
+                hashlock: _hashlock,
+                timelock: _timelock,
+                withdrawn: false,
+                refunded: false,
+                safetyDeposit: msg.value
+            });
+        }
 
         emit EscrowCreated(
             _escrowId,
@@ -78,7 +94,13 @@ contract FusionPlusEscrow {
 
         escrow.withdrawn = true;
 
-        IERC20(escrow.token).transfer(escrow.beneficiary, escrow.amount);
+        if (escrow.token == address(0)) {
+            // Transfer ETH
+            payable(escrow.beneficiary).transfer(escrow.amount);
+        } else {
+            // Transfer ERC20
+            IERC20(escrow.token).transfer(escrow.beneficiary, escrow.amount);
+        }
         
         // Transfer safety deposit to the withdrawer
         payable(msg.sender).transfer(escrow.safetyDeposit);
@@ -95,7 +117,13 @@ contract FusionPlusEscrow {
 
         escrow.refunded = true;
 
-        IERC20(escrow.token).transfer(escrow.depositor, escrow.amount);
+        if (escrow.token == address(0)) {
+            // Transfer ETH
+            payable(escrow.depositor).transfer(escrow.amount);
+        } else {
+            // Transfer ERC20
+            IERC20(escrow.token).transfer(escrow.depositor, escrow.amount);
+        }
         
         // Transfer safety deposit to the refunder
         payable(msg.sender).transfer(escrow.safetyDeposit);

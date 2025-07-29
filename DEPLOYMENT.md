@@ -83,8 +83,8 @@ aptos move publish \
 ## Contract Addresses (DEPLOYED!)
 
 ### Ethereum (Sepolia)
-- **FusionPlusEscrow**: `0x8aD67A61dFdEF53061aEa393b7213E2EF4b7B150`
-- **Explorer**: https://sepolia.etherscan.io/address/0x8aD67A61dFdEF53061aEa393b7213E2EF4b7B150
+- **FusionPlusEscrow**: `0x5D03520c42fca21159c66cA44E24f7B0c0C590d4`
+- **Explorer**: https://sepolia.etherscan.io/address/0x5D03520c42fca21159c66cA44E24f7B0c0C590d4
 
 ### Aptos (Testnet)
 - **fusion_plus::escrow**: `0xf4339b4657c83bf97bb4ab6c732dde111426c3ab4af5c19e5d933eefa4248f35`
