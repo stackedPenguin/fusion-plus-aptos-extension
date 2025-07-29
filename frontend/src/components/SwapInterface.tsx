@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
+import { PriceService } from '../services/PriceService';
+import { BalanceService } from '../services/BalanceService';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -20,6 +22,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [fromAmount, setFromAmount] = useState('');
   const [minToAmount, setMinToAmount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+  const [ethBalance, setEthBalance] = useState<string>('0');
+  const [aptBalance, setAptBalance] = useState<string>('0');
+  const [priceService] = useState(() => new PriceService());
+  const [balanceService] = useState(() => new BalanceService());
 
   const handleSwap = async () => {
     if (!ethAccount || !aptosAccount || !ethSigner) {
@@ -77,6 +84,55 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     setToChain(fromChain);
   };
 
+  // Fetch exchange rate
+  useEffect(() => {
+    const fetchRate = async () => {
+      const fromToken = fromChain === Chain.ETHEREUM ? 'ETH' : 'APT';
+      const toToken = toChain === Chain.ETHEREUM ? 'ETH' : 'APT';
+      
+      try {
+        const rate = await priceService.getExchangeRate(fromToken, toToken);
+        setExchangeRate(rate);
+      } catch (error) {
+        console.error('Failed to fetch exchange rate:', error);
+      }
+    };
+
+    fetchRate();
+    const interval = setInterval(fetchRate, 30000); // Update every 30 seconds
+    return () => clearInterval(interval);
+  }, [fromChain, toChain, priceService]);
+
+  // Fetch balances
+  useEffect(() => {
+    const fetchBalances = async () => {
+      if (ethAccount && ethSigner) {
+        const provider = ethSigner.provider;
+        if (provider) {
+          const balance = await balanceService.getEthereumBalance(ethAccount, provider);
+          setEthBalance(balance);
+        }
+      }
+
+      if (aptosAccount) {
+        const balance = await balanceService.getAptosBalance(aptosAccount);
+        setAptBalance(balance);
+      }
+    };
+
+    fetchBalances();
+    const interval = setInterval(fetchBalances, 10000); // Update every 10 seconds
+    return () => clearInterval(interval);
+  }, [ethAccount, aptosAccount, ethSigner, balanceService]);
+
+  // Calculate estimated output when input changes
+  useEffect(() => {
+    if (fromAmount && exchangeRate) {
+      const estimated = parseFloat(fromAmount) * exchangeRate;
+      setMinToAmount(estimated.toFixed(6));
+    }
+  }, [fromAmount, exchangeRate]);
+
   return (
     <div className="swap-interface">
       <h2>Create Swap Order</h2>
@@ -91,6 +147,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             <option value={Chain.ETHEREUM}>Ethereum</option>
             <option value={Chain.APTOS}>Aptos</option>
           </select>
+          <div className="balance-info">
+            Balance: {fromChain === Chain.ETHEREUM ? ethBalance : aptBalance} {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+          </div>
         </div>
 
         <div className="form-group">
@@ -120,6 +179,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             <option value={Chain.ETHEREUM}>Ethereum</option>
             <option value={Chain.APTOS}>Aptos</option>
           </select>
+          <div className="balance-info">
+            Balance: {toChain === Chain.ETHEREUM ? ethBalance : aptBalance} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+          </div>
         </div>
 
         <div className="form-group">
@@ -131,6 +193,12 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             onChange={(e) => setMinToAmount(e.target.value)}
           />
         </div>
+
+        {exchangeRate && (
+          <div className="exchange-rate">
+            Exchange Rate: 1 {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'} = {exchangeRate.toFixed(4)} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+          </div>
+        )}
 
         <button
           className="swap-button"

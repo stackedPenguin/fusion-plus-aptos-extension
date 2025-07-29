@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import Web3Modal from 'web3modal';
@@ -15,9 +15,8 @@ const web3Modal = new Web3Modal({
 
 function App() {
   const [ethAccount, setEthAccount] = useState<string | null>(null);
-  const [ethProvider, setEthProvider] = useState<ethers.Provider | null>(null);
   const [ethSigner, setEthSigner] = useState<ethers.Signer | null>(null);
-  const { account: aptosAccount, connect: connectAptos, disconnect: disconnectAptos } = useWallet();
+  const { account: aptosAccount, connect: connectAptos, disconnect: disconnectAptos, wallets } = useWallet();
   const [orderService] = useState(() => new OrderService());
 
   // Connect Ethereum wallet
@@ -28,7 +27,6 @@ function App() {
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
       
-      setEthProvider(provider);
       setEthSigner(signer);
       setEthAccount(address);
     } catch (error) {
@@ -39,7 +37,6 @@ function App() {
   const disconnectEthereum = async () => {
     await web3Modal.clearCachedProvider();
     setEthAccount(null);
-    setEthProvider(null);
     setEthSigner(null);
   };
 
@@ -71,7 +68,12 @@ function App() {
               <button onClick={disconnectAptos}>Disconnect</button>
             </div>
           ) : (
-            <button onClick={() => connectAptos('Petra')}>Connect Petra</button>
+            <button onClick={() => {
+              const petraWallet = wallets?.find(wallet => wallet.name === 'Petra');
+              if (petraWallet) {
+                connectAptos(petraWallet.name);
+              }
+            }}>Connect Petra</button>
           )}
         </div>
       </div>
