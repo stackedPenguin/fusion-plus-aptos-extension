@@ -4,7 +4,7 @@ import { CreateOrderDto, Chain } from '../types/order';
 const EIP712_DOMAIN = {
   name: 'FusionPlusAptos',
   version: '1',
-  chainId: 1, // Will be dynamic based on network
+  chainId: 11155111, // Sepolia testnet
 };
 
 const ORDER_TYPE = {
