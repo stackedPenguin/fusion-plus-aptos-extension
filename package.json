@@ -19,10 +19,21 @@
     "test:ethereum": "cd contracts/ethereum && npx hardhat test",
     "test:aptos": "cd contracts/aptos && aptos move test"
   },
-  "keywords": ["fusion", "aptos", "ethereum", "cross-chain", "atomic-swap"],
+  "keywords": [
+    "fusion",
+    "aptos",
+    "ethereum",
+    "cross-chain",
+    "atomic-swap"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "ethers": "^6.15.0",
+    "socket.io-client": "^4.8.1"
   }
 }
