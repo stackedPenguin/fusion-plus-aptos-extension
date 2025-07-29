@@ -84,8 +84,17 @@ export class OrderService {
       partialFillAllowed: orderData.partialFillAllowed,
     };
 
-    // Use _signTypedData to avoid ENS resolution
-    return await (signer as any)._signTypedData(domain, types, value);
+    // In ethers v6, signTypedData should work without ENS resolution if addresses are valid
+    // Ensure all addresses are checksummed
+    const checksummedValue = {
+      ...value,
+      fromToken: ethers.getAddress(value.fromToken),
+      toToken: ethers.getAddress(value.toToken),
+      maker: ethers.getAddress(value.maker),
+      receiver: ethers.getAddress(value.receiver),
+    };
+    
+    return await signer.signTypedData(domain, types, checksummedValue);
   }
 
   async createOrder(orderData: CreateOrderDto & { signature: string }) {
