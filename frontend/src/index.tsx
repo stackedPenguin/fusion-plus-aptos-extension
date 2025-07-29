@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { AptosWalletAdapterProvider } from '@aptos-labs/wallet-adapter-react';
-import { PetraWallet } from '@aptos-labs/wallet-adapter-petra';
+import { PetraWallet } from 'petra-plugin-wallet-adapter';
 
 const wallets = [new PetraWallet()];
 
