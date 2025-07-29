@@ -24,6 +24,12 @@ const ORDER_TYPE = {
 };
 
 export async function validateOrderSignature(order: CreateOrderDto): Promise<boolean> {
+  // In development mode, accept test signatures
+  if (process.env.NODE_ENV === 'development' && order.signature === '0x00') {
+    console.log('Development mode: Accepting test signature');
+    return true;
+  }
+  
   try {
     if (order.fromChain === Chain.ETHEREUM) {
       return validateEthereumSignature(order);
