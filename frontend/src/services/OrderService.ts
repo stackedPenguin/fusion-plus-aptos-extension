@@ -60,15 +60,25 @@ export class OrderService {
       Order: ORDER_TYPE.Order,
     };
 
+    // For cross-chain orders, we need to handle non-Ethereum addresses differently
+    // Convert Aptos addresses to a deterministic Ethereum address format for signing
+    const aptosToEthAddress = (aptosAddr: string): string => {
+      // Use a deterministic conversion: take first 20 bytes of the Aptos address
+      if (aptosAddr.startsWith('0x') && aptosAddr.length > 42) {
+        return '0x' + aptosAddr.slice(2, 42);
+      }
+      return aptosAddr;
+    };
+
     const value = {
       fromChain: orderData.fromChain,
       toChain: orderData.toChain,
-      fromToken: orderData.fromToken,
-      toToken: orderData.toToken,
+      fromToken: orderData.fromChain === Chain.APTOS ? aptosToEthAddress(orderData.fromToken) : orderData.fromToken,
+      toToken: orderData.toChain === Chain.APTOS ? aptosToEthAddress(orderData.toToken) : orderData.toToken,
       fromAmount: orderData.fromAmount,
       minToAmount: orderData.minToAmount,
-      maker: orderData.maker,
-      receiver: orderData.receiver,
+      maker: orderData.fromChain === Chain.APTOS ? aptosToEthAddress(orderData.maker) : orderData.maker,
+      receiver: orderData.toChain === Chain.APTOS ? aptosToEthAddress(orderData.receiver) : orderData.receiver,
       deadline: orderData.deadline,
       nonce: orderData.nonce,
       partialFillAllowed: orderData.partialFillAllowed,
