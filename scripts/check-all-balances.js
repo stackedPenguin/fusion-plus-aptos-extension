@@ -1,18 +1,10 @@
 const { ethers } = require('ethers');
-const { Aptos, AptosConfig, Network } = require('@aptos-labs/ts-sdk');
 
 async function checkAllBalances() {
   console.log('=== Checking All Wallet Balances ===\n');
   
   // Ethereum provider
   const ethProvider = new ethers.JsonRpcProvider('https://ethereum-sepolia-rpc.publicnode.com');
-  
-  // Aptos client
-  const aptosConfig = new AptosConfig({ 
-    network: Network.TESTNET,
-    fullnode: 'https://fullnode.testnet.aptoslabs.com/v1'
-  });
-  const aptosClient = new Aptos(aptosConfig);
   
   // User wallets
   console.log('USER WALLETS:');
@@ -29,17 +21,31 @@ async function checkAllBalances() {
   // User Aptos
   const userAptosAddress = '0xf4339b4657c83bf97bb4ab6c732dde111426c3ab4af5c19e5d933eefa4248f35';
   try {
-    const userAptosAccount = await aptosClient.getAccountResource({
-      accountAddress: userAptosAddress,
-      resourceType: '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>'
+    const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        function: "0x1::coin::balance",
+        type_arguments: ["0x1::aptos_coin::AptosCoin"],
+        arguments: [userAptosAddress]
+      })
     });
-    const balance = userAptosAccount.coin?.value || '0';
-    console.log('Aptos:', userAptosAddress);
-    console.log('Balance:', Number(balance) / 100000000, 'APT');
-    console.log(balance === '0' ? '❌ Needs funding' : '✅ Funded');
+    
+    if (response.ok) {
+      const result = await response.json();
+      const balance = result[0] || '0';
+      const aptAmount = parseInt(balance) / 1e8;
+      console.log('Aptos:', userAptosAddress);
+      console.log('Balance:', aptAmount, 'APT');
+      console.log(balance === '0' ? '❌ Needs funding' : '✅ Funded');
+    } else {
+      console.log('Aptos:', userAptosAddress);
+      console.log('Balance: 0 APT (account not found)');
+      console.log('❌ Needs funding');
+    }
   } catch (e) {
     console.log('Aptos:', userAptosAddress);
-    console.log('Balance: 0 APT (account not found)');
+    console.log('Balance: 0 APT (error checking balance)');
     console.log('❌ Needs funding');
   }
   
@@ -57,17 +63,31 @@ async function checkAllBalances() {
   // Resolver Aptos
   const resolverAptosAddress = '0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532';
   try {
-    const resolverAptosAccount = await aptosClient.getAccountResource({
-      accountAddress: resolverAptosAddress,
-      resourceType: '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>'
+    const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        function: "0x1::coin::balance",
+        type_arguments: ["0x1::aptos_coin::AptosCoin"],
+        arguments: [resolverAptosAddress]
+      })
     });
-    const balance = resolverAptosAccount.coin?.value || '0';
-    console.log('Aptos:', resolverAptosAddress);
-    console.log('Balance:', Number(balance) / 100000000, 'APT');
-    console.log(balance === '0' ? '❌ Needs funding' : '✅ Funded');
+    
+    if (response.ok) {
+      const result = await response.json();
+      const balance = result[0] || '0';
+      const aptAmount = parseInt(balance) / 1e8;
+      console.log('Aptos:', resolverAptosAddress);
+      console.log('Balance:', aptAmount, 'APT');
+      console.log(balance === '0' ? '❌ Needs funding' : '✅ Funded');
+    } else {
+      console.log('Aptos:', resolverAptosAddress);
+      console.log('Balance: 0 APT (account not found)');
+      console.log('❌ Needs funding');
+    }
   } catch (e) {
     console.log('Aptos:', resolverAptosAddress);
-    console.log('Balance: 0 APT (account not found)');
+    console.log('Balance: 0 APT (error checking balance)');
     console.log('❌ Needs funding');
   }
   
