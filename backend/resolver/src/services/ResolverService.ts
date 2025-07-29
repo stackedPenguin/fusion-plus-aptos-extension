@@ -203,7 +203,7 @@ export class ResolverService {
     if (order.toChain === 'ETHEREUM') {
       return await this.chainService.createEthereumEscrow(
         escrowId,
-        order.maker,
+        order.receiver, // Use receiver address for destination chain
         order.toToken,
         order.minToAmount,
         secretHash,
@@ -214,7 +214,7 @@ export class ResolverService {
       // Aptos destination chain
       return await this.chainService.createAptosEscrow(
         ethers.getBytes(escrowId),
-        order.maker,
+        order.receiver, // Use receiver address for destination chain
         order.minToAmount,
         ethers.getBytes(secretHash),
         timelock,
