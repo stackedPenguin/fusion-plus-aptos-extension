@@ -80,10 +80,12 @@ aptos move publish \
   --assume-yes
 ```
 
-## Contract Addresses (will be updated after deployment)
+## Contract Addresses (DEPLOYED!)
 
 ### Ethereum (Sepolia)
-- **FusionPlusEscrow**: `<pending deployment>`
+- **FusionPlusEscrow**: `0x8aD67A61dFdEF53061aEa393b7213E2EF4b7B150`
+- **Explorer**: https://sepolia.etherscan.io/address/0x8aD67A61dFdEF53061aEa393b7213E2EF4b7B150
 
 ### Aptos (Testnet)
-- **fusion_plus::escrow**: `<pending deployment>`
+- **fusion_plus::escrow**: `0xf4339b4657c83bf97bb4ab6c732dde111426c3ab4af5c19e5d933eefa4248f35`
+- **Transaction**: https://explorer.aptoslabs.com/txn/0x340af5c0c8977e115022aa931ddd480d1273986f3eca1f05f39861919a124a67?network=testnet
