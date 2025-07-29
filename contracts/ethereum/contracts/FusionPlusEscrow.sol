@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract FusionPlusEscrow is ReentrancyGuard {
+contract FusionPlusEscrow {
     struct Escrow {
         address depositor;
         address beneficiary;
@@ -39,7 +38,7 @@ contract FusionPlusEscrow is ReentrancyGuard {
         uint256 _amount,
         bytes32 _hashlock,
         uint256 _timelock
-    ) external payable nonReentrant {
+    ) external payable {
         require(escrows[_escrowId].depositor == address(0), "Escrow already exists");
         require(_amount > 0, "Amount must be greater than 0");
         require(_timelock > block.timestamp, "Timelock must be in the future");
@@ -70,7 +69,7 @@ contract FusionPlusEscrow is ReentrancyGuard {
         );
     }
 
-    function withdraw(bytes32 _escrowId, bytes32 _secret) external nonReentrant {
+    function withdraw(bytes32 _escrowId, bytes32 _secret) external {
         Escrow storage escrow = escrows[_escrowId];
         require(escrow.depositor != address(0), "Escrow does not exist");
         require(!escrow.withdrawn, "Already withdrawn");
@@ -87,7 +86,7 @@ contract FusionPlusEscrow is ReentrancyGuard {
         emit EscrowWithdrawn(_escrowId, _secret);
     }
 
-    function refund(bytes32 _escrowId) external nonReentrant {
+    function refund(bytes32 _escrowId) external {
         Escrow storage escrow = escrows[_escrowId];
         require(escrow.depositor != address(0), "Escrow does not exist");
         require(!escrow.withdrawn, "Already withdrawn");

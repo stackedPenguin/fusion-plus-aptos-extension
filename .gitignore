@@ -50,3 +50,4 @@ coverage/
 .parcel-cache/
 tmp/
 temp/
+rules.md
