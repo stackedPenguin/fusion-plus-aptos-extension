@@ -18,13 +18,13 @@ Build and demonstrate a cross-chain swap solution (Fusion+) between Ethereum (EV
 |---------------------------|---------------------------------------|----------------------------|--------------------------|
 | Smart Contracts           | Solidity (Hardhat/Foundry, Ethers.js) | Move (Aptos CLI/SDK)       | —                        |
 | Hashlock/Timelock Logic   | Solidity HTLC                         | Move HTLC module           | —                        |
-| Cross-Chain Bridge        | LayerZero, Wormhole, Celer cBridge    | LayerZero, Wormhole, Celer | Off-chain relayer scripts |
+| Cross-Chain Messaging     | LayerZero V2 OFT                      | LayerZero V2 OFT           | LayerZero endpoint config |
 | Off-chain Orderbook/Relay | Node.js/TypeScript (REST, WS)         | Node.js/TypeScript         | Node.js, PostgreSQL      |
 | UI                        | React with Ethers.js & Aptos SDK      | React, Aptos SDK           | WebSocket for real-time  |
 | Relayer/Resolver Process  | Node.js/TypeScript or Rust            | Node.js/TypeScript or Rust | —                        |
 | Wallets                   | MetaMask, WalletConnect               | Petra, Martian             | —                        |
 
-## 3. Implementation Steps (Precise)
+## 3. Implementation Steps (Production-Ready)
 
 ### Step 1: Off-chain Intent Order Engine
 
@@ -57,7 +57,7 @@ Build and demonstrate a cross-chain swap solution (Fusion+) between Ethereum (EV
     - Handles cancellations and refunds via timelock expiry.
     - Enables bidirectional swaps (ETH→APT & APT→ETH).
 
-- Interface to LayerZero/Wormhole/Celer Bridge for proof of events (if used). Relayer submits signed evidence.
+- Integrate LayerZero V2 for cross-chain message verification and proof of escrow events. This ensures production-ready atomicity without relying on trust assumptions.
 
 ### Step 4: UI Implementation
 
@@ -83,13 +83,13 @@ Build and demonstrate a cross-chain swap solution (Fusion+) between Ethereum (EV
 
 - **Hashlock**: All asset transfers on both chains can only be unlocked when the correct secret is revealed on-chain.
 - **Timelock**: Refund/cancellation logic ensures no funds lost in case of incomplete swaps.
-- **Whitelisted resolvers**: (Recommended for production, optional for hackathon)—resolvers must be whitelisted or KYC’d.
+- **Whitelisted resolvers**: Production implementation with on-chain resolver registry that manages whitelist, requiring stake deposits and reputation tracking.
 - **Merkle tree of secrets**: To prevent partial fill/exploit, as detailed in 1inch Fusion+ spec.
 
 ## 5. Integration Plan
 
 1. Develop backend and smart contracts, deploying to Ethereum testnet (Sepolia) and Aptos testnet.
-2. Integrate bridge/messaging solution for proof-of-escrow (LayerZero, Celer, or mock in hackathon).
+2. Implement LayerZero V2 OFT (Omnichain Fungible Token) standard for production-grade cross-chain message passing and escrow proof verification.
 3. Build and connect the UI.
 4. Simulate partial fills and multi-resolver bidding.
 5. Run end-to-end tests with timing to confirm atomicity and refund.
@@ -97,13 +97,16 @@ Build and demonstrate a cross-chain swap solution (Fusion+) between Ethereum (EV
 
 ## 6. Deliverables
 
-- Off-chain intent/order relay back-end and documented API.
-- Solidity/Ethereum escrow contract, deployed/tested on testnet.
-- Move/Aptos escrow module, deployed/tested on testnet.
-- Relayer and resolver client scripts.
-- React-based UI supporting swap flows.
+- Off-chain intent/order relay back-end with documented REST/WebSocket API.
+- Solidity/Ethereum escrow contract with LayerZero V2 integration, deployed/tested on testnet.
+- Move/Aptos escrow module with LayerZero endpoint integration, deployed/tested on testnet.
+- Production-ready resolver service with automated order matching and cross-chain execution.
+- React-based UI with real-time order tracking, wallet integration, and live price feeds.
+- Partial fill implementation using Merkle tree of secrets for enhanced security.
+- On-chain resolver registry contract for whitelisting and stake management.
+- Comprehensive test suite covering edge cases, timeouts, and failure scenarios.
 - Live demo walkthrough showing intent creation, bid, fill, unlock (with partial fill split), on-chain confirmations, and UI.
-- Documentation with instructions for setup, signing, and resolving swaps.
+- Production deployment guide with security best practices and monitoring setup.
 
 This architecture fully satisfies:
 - Fusion+ cross-chain atomic swaps between Ethereum and Aptos,

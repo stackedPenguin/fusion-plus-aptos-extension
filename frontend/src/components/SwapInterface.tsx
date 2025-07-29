@@ -50,8 +50,12 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         toToken: toChain === Chain.ETHEREUM 
           ? ethers.ZeroAddress // ETH
           : '0x1::aptos_coin::AptosCoin', // APT
-        fromAmount: ethers.parseEther(fromAmount).toString(),
-        minToAmount: ethers.parseEther(minToAmount).toString(),
+        fromAmount: fromChain === Chain.ETHEREUM 
+          ? ethers.parseEther(fromAmount).toString()
+          : (parseFloat(fromAmount) * 1e8).toString(),
+        minToAmount: toChain === Chain.ETHEREUM
+          ? ethers.parseEther(minToAmount).toString()
+          : (parseFloat(minToAmount) * 1e8).toString(),
         maker: fromChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour

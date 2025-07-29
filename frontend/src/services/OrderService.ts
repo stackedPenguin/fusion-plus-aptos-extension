@@ -84,7 +84,8 @@ export class OrderService {
       partialFillAllowed: orderData.partialFillAllowed,
     };
 
-    return await signer.signTypedData(domain, types, value);
+    // Use _signTypedData to avoid ENS resolution
+    return await (signer as any)._signTypedData(domain, types, value);
   }
 
   async createOrder(orderData: CreateOrderDto & { signature: string }) {
