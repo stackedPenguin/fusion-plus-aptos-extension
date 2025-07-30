@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
 import { PriceService } from '../services/PriceService';
-import { PermitService } from '../services/PermitService';
 import { WETHService } from '../services/WETHService';
 import { CONTRACTS } from '../config/contracts';
 
@@ -42,8 +41,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [ethPrice, setEthPrice] = useState<number>(0);
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
-  const [showWrapConfirmation, setShowWrapConfirmation] = useState(false);
-  const [wrapAmount, setWrapAmount] = useState<string>('0');
   const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
 
@@ -90,24 +87,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           setWrapConfirmationData({ amount: ethers.formatEther(amountToWrap), isVisible: true });
           setIsLoading(false);
           return;
-        }
-          
-          setSwapStatus({ stage: 'wrapping_eth', message: `Wrapping ${ethers.formatEther(amountToWrap)} ETH to WETH...` });
-          try {
-            // Only wrap the difference needed
-            const wrapTx = await wethService.wrapETH(amountToWrap.toString());
-            console.log('ETH wrapped to WETH:', wrapTx);
-            
-            // Verify WETH balance after wrapping
-            const newWethBalance = await wethService.getBalance(ethAccount);
-            console.log('WETH balance after wrapping:', ethers.formatEther(newWethBalance));
-            
-            if (BigInt(newWethBalance) < BigInt(swapAmount)) {
-              throw new Error(`Still insufficient WETH after wrapping. Balance: ${ethers.formatEther(newWethBalance)}, Required: ${ethers.formatEther(swapAmount)}`);
-            }
-          } catch (error) {
-            throw new Error(`Failed to wrap ETH: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
         } else {
           console.log('User already has enough WETH, skipping wrap step');
         }
@@ -274,6 +253,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     setIsLoading(true);
     
     try {
+      if (!ethSigner || !ethAccount) {
+        throw new Error('Wallet not connected');
+      }
+      
       const wethService = new WETHService(ethSigner);
       const amountToWrapWei = ethers.parseEther(wrapConfirmationData.amount).toString();
       
@@ -353,7 +336,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   }, [fromAmount, exchangeRate, toChain]);
 
   // Function to fetch WETH balance
-  const fetchWethBalance = async () => {
+  const fetchWethBalance = useCallback(async () => {
     if (ethAccount && ethSigner) {
       try {
         const wethService = new WETHService(ethSigner);
@@ -364,14 +347,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         setWethBalance('0');
       }
     }
-  };
+  }, [ethAccount, ethSigner]);
 
   // Fetch WETH balance
   useEffect(() => {
     fetchWethBalance();
     const interval = setInterval(fetchWethBalance, 5000); // Update every 5 seconds
     return () => clearInterval(interval);
-  }, [ethAccount, ethSigner]);
+  }, [fetchWethBalance]);
 
   const getButtonText = () => {
     if (!ethAccount || !aptosAccount) {
