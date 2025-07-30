@@ -9,6 +9,7 @@ export class PriceService {
   private cache: Map<string, PriceCache> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds
   private readonly COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price';
+  private readonly API_KEY = process.env.COINGECKO_API_KEY;
   
   // Fallback rates for testing
   private readonly FALLBACK_RATES: Record<string, number> = {
@@ -51,12 +52,16 @@ export class PriceService {
     const toId = tokenIds[toToken.toUpperCase()];
 
     try {
-      const response = await axios.get(this.COINGECKO_API, {
-        params: {
-          ids: `${fromId},${toId}`,
-          vs_currencies: 'usd'
-        }
-      });
+      const params: any = {
+        ids: `${fromId},${toId}`,
+        vs_currencies: 'usd'
+      };
+      
+      if (this.API_KEY) {
+        params.x_cg_demo_api_key = this.API_KEY;
+      }
+
+      const response = await axios.get(this.COINGECKO_API, { params });
 
       const data = response.data;
       const fromPrice = data[fromId]?.usd;
@@ -95,12 +100,16 @@ export class PriceService {
     }
 
     try {
-      const response = await axios.get(this.COINGECKO_API, {
-        params: {
-          ids: tokenId,
-          vs_currencies: 'usd'
-        }
-      });
+      const params: any = {
+        ids: tokenId,
+        vs_currencies: 'usd'
+      };
+      
+      if (this.API_KEY) {
+        params.x_cg_demo_api_key = this.API_KEY;
+      }
+
+      const response = await axios.get(this.COINGECKO_API, { params });
 
       const price = response.data[tokenId]?.usd || 0;
       

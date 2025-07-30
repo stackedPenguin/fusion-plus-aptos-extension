@@ -23,6 +23,23 @@ const ORDER_TYPE = {
   ],
 };
 
+const ORDER_TYPE_WITH_PERMIT = {
+  Order: [
+    { name: 'fromChain', type: 'string' },
+    { name: 'toChain', type: 'string' },
+    { name: 'fromToken', type: 'string' },
+    { name: 'toToken', type: 'string' },
+    { name: 'fromAmount', type: 'uint256' },
+    { name: 'minToAmount', type: 'uint256' },
+    { name: 'maker', type: 'string' },
+    { name: 'receiver', type: 'string' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'partialFillAllowed', type: 'bool' },
+    { name: 'permitHash', type: 'bytes32' }
+  ],
+};
+
 export async function validateOrderSignature(order: CreateOrderDto): Promise<boolean> {
   // In development mode, accept test signatures
   if (process.env.NODE_ENV === 'development' && order.signature === '0x00') {
@@ -47,11 +64,13 @@ function validateEthereumSignature(order: CreateOrderDto): boolean {
   try {
     const domain = { ...EIP712_DOMAIN };
     
+    // Use different types based on whether order has a permit
+    const hasPermit = !!order.permit;
     const types = {
-      Order: ORDER_TYPE.Order,
+      Order: hasPermit ? ORDER_TYPE_WITH_PERMIT.Order : ORDER_TYPE.Order,
     };
 
-    const value = {
+    const value: any = {
       fromChain: order.fromChain,
       toChain: order.toChain,
       fromToken: order.fromToken,
@@ -64,6 +83,22 @@ function validateEthereumSignature(order: CreateOrderDto): boolean {
       nonce: order.nonce,
       partialFillAllowed: order.partialFillAllowed,
     };
+
+    // Add permitHash if order has a permit
+    if (hasPermit && order.permit) {
+      value.permitHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ['address', 'address', 'uint256', 'uint256', 'uint256'],
+          [
+            order.permit.owner,
+            order.permit.spender,
+            order.permit.value,
+            order.permit.nonce,
+            order.permit.deadline
+          ]
+        )
+      );
+    }
 
     const recoveredAddress = ethers.verifyTypedData(
       domain,

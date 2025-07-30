@@ -68,14 +68,15 @@ export class ChainServiceSimple {
         { value }
       );
     } else {
-      // ERC20 escrow
+      // ERC20 escrow - still needs safety deposit in ETH
       tx = await escrowContract.createEscrow(
         escrowId,
         beneficiary,
         token,
         amount,
         hashlock,
-        timelock
+        timelock,
+        { value: safetyDeposit } // Safety deposit required even for ERC20
       );
     }
 

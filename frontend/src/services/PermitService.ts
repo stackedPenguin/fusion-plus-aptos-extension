@@ -82,7 +82,15 @@ export class PermitService {
     permitContract: string,
     owner: string
   ): Promise<string> {
+    // WETH uses 'nonces' method, other contracts might use 'getNonce'
     const NONCE_ABI = [
+      {
+        "inputs": [{"name": "owner", "type": "address"}],
+        "name": "nonces",
+        "outputs": [{"type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+      },
       {
         "inputs": [{"name": "owner", "type": "address"}],
         "name": "getNonce",
@@ -93,8 +101,20 @@ export class PermitService {
     ];
 
     const contract = new ethers.Contract(permitContract, NONCE_ABI, provider);
-    const nonce = await contract.getNonce(owner);
-    return nonce.toString();
+    
+    try {
+      // Try 'nonces' first (WETH standard)
+      const nonce = await contract.nonces(owner);
+      return nonce.toString();
+    } catch (error) {
+      // Fallback to 'getNonce'
+      try {
+        const nonce = await contract.getNonce(owner);
+        return nonce.toString();
+      } catch (fallbackError) {
+        throw new Error('Failed to get nonce from permit contract');
+      }
+    }
   }
 
   /**

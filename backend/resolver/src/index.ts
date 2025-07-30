@@ -26,18 +26,13 @@ async function main() {
   // Handle graceful shutdown
   process.on('SIGINT', () => {
     console.log('\nShutting down resolver...');
-    resolver.stop();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     console.log('\nShutting down resolver...');
-    resolver.stop();
     process.exit(0);
   });
-
-  // Start the resolver
-  resolver.start();
 }
 
 main().catch(error => {

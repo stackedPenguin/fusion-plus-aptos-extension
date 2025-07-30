@@ -86,8 +86,14 @@ export class OrderService {
   }
 
   async createOrder(orderData: CreateOrderDto & { signature: string }) {
-    const response = await axios.post(`${this.apiUrl}/api/orders`, orderData);
-    return response.data.data;
+    console.log('Sending order to backend:', JSON.stringify(orderData, null, 2));
+    try {
+      const response = await axios.post(`${this.apiUrl}/api/orders`, orderData);
+      return response.data.data;
+    } catch (error: any) {
+      console.error('Order creation failed:', error.response?.data || error.message);
+      throw error;
+    }
   }
 
   async getOrder(orderId: string) {

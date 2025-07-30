@@ -7,6 +7,7 @@ export class PriceService {
   private cache: Map<string, PriceCache> = new Map();
   private readonly CACHE_DURATION = 30000; // 30 seconds
   private readonly COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price';
+  private readonly API_KEY = process.env.REACT_APP_COIN_GECKO_API_KEY;
   
   // Fallback rates
   private readonly FALLBACK_RATES: Record<string, number> = {
@@ -48,9 +49,14 @@ export class PriceService {
     const fromId = tokenIds[fromToken.toUpperCase()];
     const toId = tokenIds[toToken.toUpperCase()];
 
-    const response = await fetch(
-      `${this.COINGECKO_API}?ids=${fromId},${toId}&vs_currencies=usd`
-    );
+    const url = new URL(this.COINGECKO_API);
+    url.searchParams.set('ids', `${fromId},${toId}`);
+    url.searchParams.set('vs_currencies', 'usd');
+    if (this.API_KEY) {
+      url.searchParams.set('x_cg_demo_api_key', this.API_KEY);
+    }
+
+    const response = await fetch(url.toString());
 
     if (!response.ok) {
       throw new Error('Failed to fetch prices from CoinGecko');
@@ -83,9 +89,14 @@ export class PriceService {
     }
 
     try {
-      const response = await fetch(
-        `${this.COINGECKO_API}?ids=${tokenId}&vs_currencies=usd`
-      );
+      const url = new URL(this.COINGECKO_API);
+      url.searchParams.set('ids', tokenId);
+      url.searchParams.set('vs_currencies', 'usd');
+      if (this.API_KEY) {
+        url.searchParams.set('x_cg_demo_api_key', this.API_KEY);
+      }
+
+      const response = await fetch(url.toString());
 
       if (!response.ok) {
         throw new Error('Failed to fetch USD price');

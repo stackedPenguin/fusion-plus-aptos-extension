@@ -95,7 +95,7 @@ fi
 echo ""
 echo "3. Starting Frontend (port 3000)..."
 cd "$PROJECT_ROOT/frontend"
-npm start &
+BROWSER=none npm start &
 FRONTEND_PID=$!
 echo "$FRONTEND_PID" >> "$PID_FILE"
 echo "   Frontend PID: $FRONTEND_PID"

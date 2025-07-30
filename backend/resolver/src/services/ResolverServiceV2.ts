@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import { ChainServiceSimple } from './ChainServiceSimple';
 import { PriceService } from './PriceService';
 import { PermitService } from './PermitService';
+import { WETHService } from './WETHService';
 import dotenv from 'dotenv';
 import { createHash } from 'crypto';
 
@@ -145,7 +146,10 @@ export class ResolverServiceV2 {
   private async checkProfitability(order: Order): Promise<boolean> {
     try {
       // Get exchange rate
-      const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
+      const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+      const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : 
+                       order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' : 
+                       order.fromToken;
       // Handle Aptos token address
       const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
       
@@ -213,7 +217,10 @@ export class ResolverServiceV2 {
     }
     
     // Get exchange rate and calculate actual output amount
-    const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
+    const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+    const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : 
+                     order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' : 
+                     order.fromToken;
     // Handle Aptos token address
     const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
     
@@ -237,15 +244,15 @@ export class ResolverServiceV2 {
     const secretHash = ethers.keccak256(secret);
     
     // Create fill record with actual output amount
-    const fill = await this.createFill(order.id, {
-      resolver: order.toChain === 'ETHEREUM' ? this.ethereumAddress : this.aptosAddress,
-      amount: actualOutputAmount,
-      secretHash,
-      secretIndex: 0,
-      status: 'PENDING'
-    });
-
+    let fill: Fill | undefined;
     try {
+      fill = await this.createFill(order.id, {
+        resolver: order.toChain === 'ETHEREUM' ? this.ethereumAddress : this.aptosAddress,
+        amount: actualOutputAmount,
+        secretHash,
+        secretIndex: 0,
+        status: 'PENDING'
+      });
       // Create destination escrow with user as beneficiary
       const escrowId = ethers.id(order.id + '-dest-' + secretHash);
       const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
@@ -298,37 +305,79 @@ export class ResolverServiceV2 {
         chain: order.toChain,
         txHash: destTxHash,
         secretHash,
-        timelock
+        timelock,
+        amount: actualOutputAmount
       });
       
       console.log(`   ✅ Destination escrow created: ${escrowId}`);
       
-      // If order has a permit, execute automatic transfer
-      if (order.permit && order.permitSignature && order.fromChain === 'ETHEREUM') {
+      // Check if this is a WETH order that we should handle automatically
+      const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+      const isWETHOrder = order.fromChain === 'ETHEREUM' && 
+                         order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase();
+      
+      if (isWETHOrder) {
+        console.log(`   🎫 Checking WETH approval for automatic transfer...`);
+        
+        try {
+          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
+          const wethService = new WETHService(this.ethereumProvider, WETH_ADDRESS);
+          
+          // Check if user has approved WETH for our escrow contract
+          const allowance = await wethService.getAllowance(
+            order.maker,
+            process.env.ETHEREUM_ESCROW_ADDRESS!
+          );
+          
+          if (allowance >= BigInt(order.fromAmount)) {
+            console.log(`   ✅ WETH allowance sufficient: ${allowance.toString()}`);
+            console.log(`   📝 Creating source escrow (WETH will be transferred automatically)...`);
+            // Continue to create source escrow - the escrow contract will handle the transfer
+          } else {
+            console.log(`   ❌ Insufficient WETH allowance: ${allowance.toString()} < ${order.fromAmount}`);
+            console.log(`   ⏳ Waiting for user to approve WETH and create source escrow manually...`);
+            return;
+          }
+        } catch (error) {
+          console.error(`   ❌ Failed to execute WETH transfer:`, error);
+          console.log(`   ⏳ Falling back to manual escrow creation...`);
+          return;
+        }
+      } else if (order.permit && order.permitSignature && order.fromChain === 'ETHEREUM') {
+        // For other tokens with permits
         console.log(`   🎫 Executing automatic transfer with permit...`);
         
         try {
+          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
           const permitService = new PermitService(
             this.ethereumProvider,
             process.env.ETHEREUM_PERMIT_CONTRACT!
           );
           
-          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
-          
-          // Create source escrow ID
-          const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
-          
           // Execute permit transfer to our escrow contract
           const permitTxHash = await permitService.executePermitTransfer(
             order.permit,
             order.permitSignature,
-            order.fromToken, // Token address (0x0 for ETH)
+            order.fromToken,
             process.env.ETHEREUM_ESCROW_ADDRESS!, // Transfer to escrow contract
             wallet
           );
           
           console.log(`   ✅ Permit transfer executed: ${permitTxHash}`);
-          console.log(`   📝 Creating source escrow automatically...`);
+        } catch (error) {
+          console.error(`   ❌ Failed to execute permit transfer:`, error);
+          console.log(`   ⏳ Falling back to manual escrow creation...`);
+          return;
+        }
+      }
+      
+      // If we got here with WETH or permit transfers, create source escrow
+      if (isWETHOrder || (order.permit && order.permitSignature)) {
+        console.log(`   📝 Creating source escrow automatically...`);
+        
+        try {
+          // Create source escrow ID
+          const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
           
           // Create source escrow with transferred funds
           const sourceTxHash = await this.chainService.createEthereumEscrow(
@@ -346,8 +395,8 @@ export class ResolverServiceV2 {
           // Continue with normal flow - reveal secret and complete swap
           await this.completeSwap(order, fill, secret, sourceEscrowId, escrowId);
           
-        } catch (error) {
-          console.error(`   ❌ Failed to execute permit transfer:`, error);
+        } catch (error: any) {
+          console.error(`   ❌ Failed to create source escrow:`, error);
           console.log(`   ⏳ Falling back to manual escrow creation...`);
         }
       } else {
@@ -356,7 +405,10 @@ export class ResolverServiceV2 {
       
     } catch (error) {
       console.error(`Failed to create destination escrow:`, error);
-      await this.updateFillStatus(order.id, fill.id, 'FAILED');
+      // Only update fill status if fill was created
+      if (fill) {
+        await this.updateFillStatus(order.id, fill.id, 'FAILED');
+      }
       throw error;
     }
   }

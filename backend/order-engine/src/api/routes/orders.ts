@@ -9,22 +9,26 @@ export function createOrderRoutes(orderService: OrderService): Router {
   // Create new order
   router.post('/orders', async (req: Request, res: Response) => {
     try {
+      console.log('Received order:', JSON.stringify(req.body, null, 2));
       const orderDto = CreateOrderSchema.parse(req.body);
       const order = await orderService.createOrder(orderDto);
       res.json({ success: true, data: order });
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.error('Validation error:', error.errors);
         res.status(400).json({ 
           success: false, 
           error: 'Validation error', 
           details: error.errors 
         });
       } else if (error instanceof Error) {
+        console.error('Order creation error:', error.message);
         res.status(400).json({ 
           success: false, 
           error: error.message 
         });
       } else {
+        console.error('Unknown error:', error);
         res.status(500).json({ 
           success: false, 
           error: 'Internal server error' 

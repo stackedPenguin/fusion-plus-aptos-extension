@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
 import { PriceService } from '../services/PriceService';
 import { PermitService } from '../services/PermitService';
+import { WETHService } from '../services/WETHService';
 import { CONTRACTS } from '../config/contracts';
 
 interface SwapInterfaceProps {
@@ -15,7 +16,7 @@ interface SwapInterfaceProps {
 }
 
 interface SwapStatus {
-  stage: 'idle' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error';
+  stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error';
   message: string;
   orderId?: string;
   escrowHash?: string;
@@ -62,21 +63,76 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     }
 
     setIsLoading(true);
-    setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
     
     try {
+      // Check if we're swapping ETH from Ethereum
+      const isETHSwap = fromChain === Chain.ETHEREUM;
+      const swapAmount = isETHSwap ? ethers.parseEther(fromAmount).toString() : (parseFloat(fromAmount) * 1e8).toString();
+      
+      // Step 1: If swapping ETH, wrap to WETH first
+      if (isETHSwap) {
+        const wethService = new WETHService(ethSigner);
+        
+        // Check if user already has enough WETH
+        const wethStatus = await wethService.checkWETHReadiness(
+          ethAccount,
+          CONTRACTS.ETHEREUM.ESCROW, // Check approval for escrow contract
+          swapAmount
+        );
+        
+        if (!wethStatus.hasEnoughWETH) {
+          // Show confirmation dialog
+          const shouldWrap = window.confirm(
+            `To continue with the swap, ${fromAmount} ETH needs to be wrapped to WETH.\n\n` +
+            `This is required because permits only work with ERC20 tokens, not native ETH.\n\n` +
+            `Click OK to wrap ETH to WETH, or Cancel to abort the swap.`
+          );
+          
+          if (!shouldWrap) {
+            setSwapStatus({ stage: 'idle', message: 'Swap cancelled' });
+            setIsLoading(false);
+            return;
+          }
+          
+          setSwapStatus({ stage: 'wrapping_eth', message: 'Wrapping ETH to WETH...' });
+          try {
+            const wrapTx = await wethService.wrapETH(swapAmount);
+            console.log('ETH wrapped to WETH:', wrapTx);
+          } catch (error) {
+            throw new Error(`Failed to wrap ETH: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }
+        
+        // Step 2: Check and handle WETH approval for the Escrow contract
+        setSwapStatus({ stage: 'approving_weth', message: 'Checking WETH approval...' });
+        const escrowAllowance = await wethService.getAllowance(ethAccount, CONTRACTS.ETHEREUM.ESCROW);
+        
+        if (escrowAllowance < BigInt(swapAmount)) {
+          setSwapStatus({ stage: 'approving_weth', message: 'Approving WETH for escrow contract...' });
+          try {
+            const approveTx = await wethService.approve(
+              CONTRACTS.ETHEREUM.ESCROW, // Approve escrow contract, not resolver
+              ethers.MaxUint256.toString() // Infinite approval
+            );
+            console.log('WETH approved for escrow contract:', approveTx);
+          } catch (error) {
+            throw new Error(`Failed to approve WETH: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }
+      }
+      
+      setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
+      
       const orderData = {
         fromChain,
         toChain,
         fromToken: fromChain === Chain.ETHEREUM 
-          ? ethers.ZeroAddress // ETH
+          ? CONTRACTS.ETHEREUM.WETH // Use WETH instead of ETH
           : '0x1::aptos_coin::AptosCoin', // APT
         toToken: toChain === Chain.ETHEREUM 
           ? ethers.ZeroAddress // ETH
           : '0x1::aptos_coin::AptosCoin', // APT
-        fromAmount: fromChain === Chain.ETHEREUM 
-          ? ethers.parseEther(fromAmount).toString()
-          : (parseFloat(fromAmount) * 1e8).toString(),
+        fromAmount: swapAmount,
         minToAmount: toChain === Chain.ETHEREUM
           ? ethers.parseEther((parseFloat(estimatedOutput) * 0.995).toString()).toString() // 0.5% slippage
           : Math.floor(parseFloat(estimatedOutput) * 1e8 * 0.995).toString(), // 0.5% slippage for resolver margin
@@ -90,27 +146,17 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       let finalOrderData: any;
       let signature: string;
 
-      // If source chain is Ethereum, create a permit for automatic transfer
+      // If source chain is Ethereum, we can't use permits with WETH
+      // WETH9 doesn't support EIP-2612 permits, only traditional approve/transferFrom
       if (fromChain === Chain.ETHEREUM) {
-        setSwapStatus({ stage: 'submitting', message: 'Signing permit for automatic transfer...' });
+        setSwapStatus({ stage: 'submitting', message: 'Creating order...' });
         
-        try {
-          // Create order with permit
-          const orderWithPermit = await PermitService.createOrderWithPermit(
-            orderData,
-            ethSigner,
-            CONTRACTS.ETHEREUM.PERMIT,
-            CONTRACTS.RESOLVER.ETHEREUM
-          );
-          
-          finalOrderData = orderWithPermit;
-          signature = orderWithPermit.signature;
-          
-          console.log('Order with permit created:', orderWithPermit);
-        } catch (error) {
-          console.error('Failed to create permit:', error);
-          throw new Error(`Failed to create permit: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
+        // For WETH, we need to ensure approval is done first (already handled above)
+        // Then create a regular order without permit
+        signature = await orderService.signOrder(orderData, ethSigner);
+        finalOrderData = { ...orderData, signature };
+        
+        console.log('Order created with WETH (no permit - using approval):', finalOrderData);
       } else {
         // For non-Ethereum source chains, use regular signature
         signature = await orderService.signOrder(orderData, ethSigner);
@@ -367,7 +413,16 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         {/* Status Message */}
         {swapStatus.stage !== 'idle' && (
           <div className={`swap-status ${swapStatus.stage} fade-in`}>
-            <div className="status-message">{swapStatus.message}</div>
+            <div className="status-message">
+              {swapStatus.stage === 'wrapping_eth' && '🔄 '}
+              {swapStatus.stage === 'approving_weth' && '✅ '}
+              {swapStatus.stage === 'submitting' && '📝 '}
+              {swapStatus.stage === 'waiting' && '⏳ '}
+              {swapStatus.stage === 'escrow_created' && '🔒 '}
+              {swapStatus.stage === 'completed' && '✅ '}
+              {swapStatus.stage === 'error' && '❌ '}
+              {swapStatus.message}
+            </div>
             {swapStatus.orderId && (
               <div className="order-id">Order ID: {swapStatus.orderId.slice(0, 8)}...</div>
             )}
