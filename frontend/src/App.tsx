@@ -81,6 +81,57 @@ function App() {
     }
   }, [aptosAccount]);
 
+  // Handle balance refresh events from SwapInterface
+  useEffect(() => {
+    const handleRefreshBalances = () => {
+      // Force update both balances
+      if (ethSigner) {
+        const updateEthBalance = async () => {
+          try {
+            const address = await ethSigner.getAddress();
+            const balance = await ethSigner.provider?.getBalance(address);
+            if (balance) {
+              setEthBalance(ethers.formatEther(balance));
+            }
+          } catch (error) {
+            console.error('Failed to refresh ETH balance:', error);
+          }
+        };
+        updateEthBalance();
+      }
+      
+      if (aptosAccount?.address) {
+        const updateAptBalance = async () => {
+          try {
+            const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                function: '0x1::coin::balance',
+                type_arguments: ['0x1::aptos_coin::AptosCoin'],
+                arguments: [aptosAccount.address]
+              })
+            });
+            
+            if (response.ok) {
+              const result = await response.json();
+              const balance = result[0] || '0';
+              setAptosBalance((Number(balance) / 100000000).toFixed(6));
+            }
+          } catch (error) {
+            console.error('Failed to refresh APT balance:', error);
+          }
+        };
+        updateAptBalance();
+      }
+    };
+
+    window.addEventListener('refreshBalances', handleRefreshBalances);
+    return () => window.removeEventListener('refreshBalances', handleRefreshBalances);
+  }, [ethSigner, aptosAccount]);
+
   // Connect Ethereum wallet
   const connectEthereum = async () => {
     try {

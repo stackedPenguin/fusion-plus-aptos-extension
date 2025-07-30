@@ -882,6 +882,29 @@ body {
   font-size: 16px;
 }
 
+.completion-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.new-swap-button {
+  background: var(--accent-primary);
+  color: var(--text-primary);
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.new-swap-button:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
 /* Token Dropdown Menu */
 .dropdown-arrow {
   font-size: 10px;

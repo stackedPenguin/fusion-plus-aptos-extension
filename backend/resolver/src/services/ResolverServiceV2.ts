@@ -494,6 +494,12 @@ export class ResolverServiceV2 {
     console.log(`\n💰 Completing swap automatically...`);
     
     try {
+      // Check if fill is already completed or being processed
+      if (fill.status === 'COMPLETED' || fill.status === 'SOURCE_WITHDRAWN') {
+        console.log('   ⚠️ Fill already completed or being processed, skipping...');
+        return;
+      }
+      
       // Update fill status
       await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_CREATED', {
         sourceEscrowId

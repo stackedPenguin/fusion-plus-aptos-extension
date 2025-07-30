@@ -202,14 +202,22 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         if (data.orderId === orderId) {
           setSwapStatus({
             stage: 'completed',
-            message: `Swap completed successfully!`,
+            message: `Swap completed successfully! You received ${(parseFloat(data.toAmount || '0') / 100000000).toFixed(4)} APT`,
             orderId
           });
           
-          // Update WETH balance after successful swap
+          // Update both WETH and APT balances after successful swap
           if (fromChain === Chain.ETHEREUM) {
+            // Immediate update
             fetchWethBalance();
+            // Additional updates with delays to account for blockchain confirmation times
+            setTimeout(() => fetchWethBalance(), 3000);
+            setTimeout(() => fetchWethBalance(), 8000);
+            setTimeout(() => fetchWethBalance(), 15000);
           }
+          // Trigger parent component to refresh APT balance
+          window.dispatchEvent(new Event('refreshBalances'));
+          setTimeout(() => window.dispatchEvent(new Event('refreshBalances')), 5000);
         }
       });
 
@@ -384,6 +392,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   }, [showTokenMenu]);
 
   const getButtonText = () => {
+    if (swapStatus.stage === 'completed') {
+      return 'Start New Swap';
+    }
     if (!ethAccount || !aptosAccount) {
       return 'Connect Wallets';
     }
@@ -394,8 +405,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     if (parseFloat(fromAmount) > parseFloat(balance)) {
       return 'Insufficient balance';
     }
-    if (isLoading) {
-      return 'Creating Order...';
+    if (isLoading || swapStatus.stage !== 'idle') {
+      return 'Processing...';
     }
     return 'Swap';
   };
@@ -403,6 +414,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const isButtonDisabled = () => {
     const balance = fromChain === Chain.ETHEREUM && selectedToken === 'WETH' ? wethBalance : fromBalance;
     return isLoading || 
+      swapStatus.stage !== 'idle' ||
       !ethAccount || 
       !aptosAccount || 
       !fromAmount || 
@@ -592,7 +604,19 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               <div className="completion-details">
                 <div className="success-icon">🎉</div>
                 <p>Your swap has been completed successfully!</p>
-                <p>Check your wallet for the received funds.</p>
+                <p>Check your wallet for the received APT.</p>
+                <div className="completion-actions">
+                  <button 
+                    className="new-swap-button"
+                    onClick={() => {
+                      setSwapStatus({ stage: 'idle', message: '' });
+                      setFromAmount('');
+                      setEstimatedOutput('');
+                    }}
+                  >
+                    Start New Swap
+                  </button>
+                </div>
               </div>
             )}
             {swapStatus.escrowHash && swapStatus.stage !== 'completed' && (
@@ -610,7 +634,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         {/* Swap Button */}
         <button
           className="swap-button"
-          onClick={handleSwap}
+          onClick={swapStatus.stage === 'completed' ? () => {
+            setSwapStatus({ stage: 'idle', message: '' });
+            setFromAmount('');
+            setEstimatedOutput('');
+          } : handleSwap}
           disabled={isButtonDisabled()}
         >
           {getButtonText()}
