@@ -14,15 +14,45 @@ export class AptosChainService {
 
   constructor() {
     this.aptosNodeUrl = process.env.APTOS_NODE_URL || 'https://fullnode.testnet.aptoslabs.com';
-    this.escrowAddress = process.env.APTOS_ESCROW_ADDRESS!;
+    this.escrowAddress = process.env.APTOS_ESCROW_MODULE || '0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0::escrow';
     
     // Parse private key and derive public key
-    this.privateKeyHex = process.env.APTOS_PRIVATE_KEY!.replace('0x', '');
+    const rawPrivateKey = process.env.APTOS_PRIVATE_KEY!;
+    console.log('Raw private key format:', rawPrivateKey.substring(0, 20) + '...');
+    
+    // Remove prefix and 0x
+    const cleanKey = rawPrivateKey
+      .replace('ed25519-priv-', '')
+      .replace('0x', '');
+    
+    console.log('Clean key hex length:', cleanKey.length);
+    
+    // Check if this is a 64-byte key (32-byte private + 32-byte public)
+    if (cleanKey.length === 128) {
+      // Use only the first 32 bytes as the private key seed
+      this.privateKeyHex = cleanKey.substring(0, 64);
+      console.log('Using first 32 bytes as seed');
+    } else if (cleanKey.length === 64) {
+      // This is already a 32-byte key
+      this.privateKeyHex = cleanKey;
+    } else {
+      throw new Error(`Invalid private key length: ${cleanKey.length}. Expected 64 or 128 hex characters.`);
+    }
+    
     const privateKeyBytes = Buffer.from(this.privateKeyHex, 'hex');
-    const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes.slice(0, 32));
+    console.log('Private key seed bytes length:', privateKeyBytes.length);
+    
+    // Generate key pair from 32-byte seed
+    const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes);
     
     this.publicKeyHex = '0x' + Buffer.from(keyPair.publicKey).toString('hex');
     this.address = process.env.APTOS_RESOLVER_ADDRESS!;
+    
+    // Store the full secret key (64 bytes: private + public) for signing
+    this.privateKeyHex = Buffer.from(keyPair.secretKey).toString('hex');
+    
+    console.log('Public key:', this.publicKeyHex);
+    console.log('Address:', this.address);
   }
 
   async createEscrow(
