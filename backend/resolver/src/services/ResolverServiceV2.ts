@@ -43,6 +43,8 @@ export class ResolverServiceV2 {
   private ethereumProvider: ethers.Provider;
   private aptosProvider: any; // Aptos client
   
+  // Track active orders
+  private activeOrders: Map<string, Order> = new Map();
   // Track fills we're monitoring
   private monitoringFills: Map<string, Fill> = new Map();
   // Track secrets for fills
@@ -92,6 +94,7 @@ export class ResolverServiceV2 {
 
     try {
       this.isProcessing.add(order.id);
+      this.activeOrders.set(order.id, order);
       
       console.log(`\n🔍 Evaluating order ${order.id}`);
       console.log(`   ${order.fromChain} → ${order.toChain}`);
@@ -308,6 +311,18 @@ export class ResolverServiceV2 {
       await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
       
       console.log('   ✅ Successfully withdrew from source escrow!');
+      
+      // Send cross-chain secret reveal if LayerZero is configured
+      const order = this.activeOrders.get(fill.orderId);
+      if (order && order.toChain === 'APTOS') {
+        console.log('   🌐 Sending cross-chain secret reveal to Aptos...');
+        await this.chainService.sendCrossChainSecretReveal(
+          10108, // Aptos testnet endpoint ID
+          sourceEscrowId,
+          secret
+        );
+      }
+      
       console.log('   🎉 User can now use the revealed secret to withdraw from destination escrow');
       
       // Update final status

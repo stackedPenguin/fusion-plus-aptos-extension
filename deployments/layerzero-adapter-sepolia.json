@@ -1,0 +1,9 @@
+{
+  "network": "sepolia",
+  "adapterAddress": "0x544f58930c7B12c77540f76eb378677260e044dc",
+  "lzEndpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
+  "deployer": "0x4718eAfbbDC0DdaAfeB520fF641c6aeCbA8042Fc",
+  "timestamp": "2025-07-30T01:47:38.138Z",
+  "aptosEid": 10108,
+  "aptosTrustedRemote": "0x36f5260acde988971c690510e4f36b166e614e7dc16bb3b86dd19c758e38f577"
+}

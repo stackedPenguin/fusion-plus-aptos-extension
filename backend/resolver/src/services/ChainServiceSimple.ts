@@ -9,6 +9,7 @@ export class ChainServiceSimple {
     provider: ethers.Provider;
     signer: ethers.Wallet;
     escrowAddress: string;
+    layerZeroAdapter?: string;
   };
   private aptos: AptosChainService;
 
@@ -20,7 +21,8 @@ export class ChainServiceSimple {
     this.ethereum = {
       provider: ethProvider,
       signer: ethSigner,
-      escrowAddress: process.env.ETHEREUM_ESCROW_ADDRESS!
+      escrowAddress: process.env.ETHEREUM_ESCROW_ADDRESS!,
+      layerZeroAdapter: process.env.LAYERZERO_ADAPTER_ADDRESS
     };
 
     // Initialize Aptos
@@ -119,5 +121,53 @@ export class ChainServiceSimple {
   async getAptosBalance(address: string): Promise<number> {
     const balance = await this.aptos.getBalance(address);
     return parseInt(balance);
+  }
+
+  async sendCrossChainSecretReveal(
+    destinationChainId: number,
+    escrowId: string,
+    secret: Uint8Array
+  ): Promise<string | null> {
+    if (!this.ethereum.layerZeroAdapter) {
+      console.log('LayerZero adapter not configured, skipping cross-chain reveal');
+      return null;
+    }
+
+    try {
+      const adapterAbi = [
+        'function sendSecretReveal(uint32 _dstEid, bytes32 _escrowId, bytes32 _secret) payable'
+      ];
+      
+      const adapter = new ethers.Contract(
+        this.ethereum.layerZeroAdapter,
+        adapterAbi,
+        this.ethereum.signer
+      );
+
+      // Map chain to LayerZero endpoint ID
+      const endpointIds: { [key: string]: number } = {
+        'APTOS': 10108, // Aptos testnet
+        'ETHEREUM': 10161 // Sepolia
+      };
+
+      const dstEid = endpointIds[destinationChainId.toString()] || destinationChainId;
+      
+      console.log(`Sending cross-chain secret reveal to chain ${dstEid}...`);
+      
+      const tx = await adapter.sendSecretReveal(
+        dstEid,
+        ethers.hexlify(escrowId),
+        ethers.hexlify(secret),
+        { value: ethers.parseEther('0.0001') } // Small fee for LayerZero
+      );
+
+      await tx.wait();
+      console.log(`Cross-chain secret reveal sent: ${tx.hash}`);
+      
+      return tx.hash;
+    } catch (error) {
+      console.error('Failed to send cross-chain secret reveal:', error);
+      return null;
+    }
   }
 }
