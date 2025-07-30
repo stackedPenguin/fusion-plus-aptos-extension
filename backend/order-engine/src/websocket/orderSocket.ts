@@ -58,6 +58,33 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
       socket.join('active:orders');
     });
 
+    // Relay escrow events from resolver to frontend
+    socket.on('escrow:destination:created', (data: any) => {
+      console.log('Relaying escrow:destination:created event:', data);
+      // Broadcast to all connected clients
+      io.emit('escrow:destination:created', data);
+      // Also emit to specific order room
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:escrowCreated', data);
+      }
+    });
+
+    socket.on('escrow:source:created', (data: any) => {
+      console.log('Relaying escrow:source:created event:', data);
+      io.emit('escrow:source:created', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:sourceEscrowCreated', data);
+      }
+    });
+
+    socket.on('escrow:secretRevealed', (data: any) => {
+      console.log('Relaying escrow:secretRevealed event:', data);
+      io.emit('escrow:secretRevealed', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:secretRevealed', data);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('Client disconnected:', socket.id);
     });
