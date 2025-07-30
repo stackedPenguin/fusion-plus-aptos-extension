@@ -133,7 +133,8 @@ export class ResolverServiceV2 {
     try {
       // Get exchange rate
       const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
-      const toToken = order.toToken === ethers.ZeroAddress ? 'APT' : order.toToken;
+      // Handle Aptos token address
+      const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
       
       const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
       
@@ -153,10 +154,23 @@ export class ResolverServiceV2 {
       console.log(`   📊 Expected output: ${expectedOutput} ${toToken}`);
       console.log(`   📊 Min required: ${minRequired} ${toToken}`);
       
-      const isProfitable = parseFloat(expectedOutput) >= parseFloat(minRequired);
+      // Add small tolerance for floating point comparison (0.0001%)
+      const tolerance = 0.000001;
+      const outputValue = parseFloat(expectedOutput);
+      const requiredValue = parseFloat(minRequired);
+      const ratio = outputValue / requiredValue;
+      
+      const isProfitable = ratio >= (1 - tolerance);
       
       if (isProfitable) {
-        console.log(`   ✅ Profitable with ${((parseFloat(expectedOutput) / parseFloat(minRequired) - 1) * 100).toFixed(2)}% margin`);
+        const margin = (ratio - 1) * 100;
+        if (margin < 0.01) {
+          console.log(`   ✅ Profitable at breakeven (within tolerance)`);
+        } else {
+          console.log(`   ✅ Profitable with ${margin.toFixed(2)}% margin`);
+        }
+      } else {
+        console.log(`   ❌ Not profitable, ratio: ${ratio.toFixed(6)} (need >= ${(1 - tolerance).toFixed(6)})`);
       }
       
       return isProfitable;
@@ -178,7 +192,8 @@ export class ResolverServiceV2 {
     
     // Get exchange rate and calculate actual output amount
     const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
-    const toToken = order.toToken === ethers.ZeroAddress ? 'APT' : order.toToken;
+    // Handle Aptos token address
+    const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
     
     const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
     const outputAmount = this.priceService.calculateOutputAmount(
