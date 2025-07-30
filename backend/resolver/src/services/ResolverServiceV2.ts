@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { ChainService } from './ChainService';
+import { ChainServiceSimple } from './ChainServiceSimple';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -22,6 +22,7 @@ interface Order {
 }
 
 interface Fill {
+  id: string;
   orderId: string;
   resolver: string;
   amount: string;
@@ -34,7 +35,7 @@ interface Fill {
 
 export class ResolverServiceV2 {
   private socket: Socket;
-  private chainService: ChainService;
+  private chainService: ChainServiceSimple;
   private orderEngineUrl: string;
   private isProcessing: Set<string> = new Set();
   private ethereumAddress: string;
@@ -44,10 +45,14 @@ export class ResolverServiceV2 {
   
   // Track fills we're monitoring
   private monitoringFills: Map<string, Fill> = new Map();
+  // Track secrets for fills
+  private fillSecrets: Map<string, Uint8Array> = new Map();
+  // Track processed events to avoid duplicates
+  private processedEvents: Set<string> = new Set();
 
   constructor() {
     this.orderEngineUrl = process.env.ORDER_ENGINE_URL || 'http://localhost:3001';
-    this.chainService = new ChainService();
+    this.chainService = new ChainServiceSimple();
     this.ethereumAddress = process.env.ETHEREUM_RESOLVER_ADDRESS!;
     this.aptosAddress = process.env.APTOS_RESOLVER_ADDRESS!;
     
@@ -190,6 +195,7 @@ export class ResolverServiceV2 {
         ...fill,
         destinationEscrowId: escrowId
       });
+      this.fillSecrets.set(fill.id, secret);
       
       // Broadcast to user that destination escrow is ready
       this.socket.emit('escrow:destination:created', {
@@ -212,36 +218,65 @@ export class ResolverServiceV2 {
   }
 
   private async startEscrowMonitoring() {
-    // Monitor Ethereum escrow events
+    // Monitor Ethereum escrow events using polling instead of filters
     if (process.env.ETHEREUM_ESCROW_ADDRESS) {
-      const escrowAbi = [
-        'event EscrowCreated(bytes32 indexed escrowId, address indexed depositor, address indexed beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock)'
-      ];
+      console.log('Starting escrow event monitoring...');
       
-      const escrowContract = new ethers.Contract(
-        process.env.ETHEREUM_ESCROW_ADDRESS,
-        escrowAbi,
-        this.ethereumProvider
-      );
-      
-      // Listen for new escrows where resolver is beneficiary
-      escrowContract.on('EscrowCreated', async (escrowId, depositor, beneficiary, token, amount, hashlock, timelock) => {
-        if (beneficiary.toLowerCase() === this.ethereumAddress.toLowerCase()) {
-          console.log(`\n🔔 Detected source escrow on Ethereum!`);
-          console.log(`   Escrow ID: ${escrowId}`);
-          console.log(`   From: ${depositor}`);
-          console.log(`   Amount: ${ethers.formatEther(amount)} ETH`);
+      // Poll for events every 5 seconds
+      setInterval(async () => {
+        try {
+          const escrowAbi = [
+            'event EscrowCreated(bytes32 indexed escrowId, address indexed depositor, address indexed beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock)'
+          ];
           
-          // Find matching fill by hashlock
-          for (const [destEscrowId, fill] of this.monitoringFills) {
-            if (fill.secretHash === hashlock) {
-              console.log(`   ✅ Matched with order fill!`);
-              await this.handleSourceEscrowCreated(fill, escrowId);
-              break;
+          const escrowContract = new ethers.Contract(
+            process.env.ETHEREUM_ESCROW_ADDRESS!,
+            escrowAbi,
+            this.ethereumProvider
+          );
+          
+          // Get recent blocks
+          const currentBlock = await this.ethereumProvider.getBlockNumber();
+          const fromBlock = Math.max(0, currentBlock - 10); // Last 10 blocks
+          
+          // Query for events
+          const filter = escrowContract.filters.EscrowCreated(
+            null,
+            null,
+            this.ethereumAddress
+          );
+          
+          const events = await escrowContract.queryFilter(filter, fromBlock, currentBlock);
+          
+          for (const event of events) {
+            if (!('args' in event)) continue;
+            
+            const [escrowId, depositor, beneficiary, token, amount, hashlock, timelock] = event.args as any[];
+            
+            // Check if we've already processed this event
+            const eventKey = `${event.blockNumber}-${event.transactionIndex}`;
+            if (this.processedEvents.has(eventKey)) continue;
+            
+            this.processedEvents.add(eventKey);
+            
+            console.log(`\n🔔 Detected source escrow on Ethereum!`);
+            console.log(`   Escrow ID: ${escrowId}`);
+            console.log(`   From: ${depositor}`);
+            console.log(`   Amount: ${ethers.formatEther(amount)} ETH`);
+            
+            // Find matching fill by hashlock
+            for (const [destEscrowId, fill] of this.monitoringFills) {
+              if (fill.secretHash === hashlock) {
+                console.log(`   ✅ Matched with order fill!`);
+                await this.handleSourceEscrowCreated(fill, escrowId);
+                break;
+              }
             }
           }
+        } catch (error) {
+          // Silently ignore polling errors
         }
-      });
+      }, 5000);
     }
     
     // TODO: Monitor Aptos escrow events
@@ -288,11 +323,7 @@ export class ResolverServiceV2 {
   }
 
   private getSecretForFill(fill: Fill): Uint8Array | null {
-    // In production, store secrets securely
-    // For now, regenerate from deterministic source
-    // WARNING: This is not secure - use proper secret storage
-    const deterministicSecret = ethers.toUtf8Bytes(fill.orderId + '-secret');
-    return ethers.getBytes(ethers.keccak256(deterministicSecret));
+    return this.fillSecrets.get(fill.id) || null;
   }
 
   private async createFill(orderId: string, fillData: any): Promise<Fill> {

@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
+import { Aptos, AptosConfig, Network, Ed25519PrivateKey } from '@aptos-labs/ts-sdk';
 import express from 'express';
 import dotenv from 'dotenv';
 
@@ -164,7 +164,8 @@ export class RelayerService {
           parseInt(params.amount),
           params.hashlock,
           parseInt(params.timelock)
-        ]
+        ],
+        typeArguments: []
       };
 
       const tx = await this.aptosClient.transaction.build.simple({
@@ -173,7 +174,8 @@ export class RelayerService {
       });
 
       // Sign and submit
-      const privateKey = process.env.RELAYER_PRIVATE_KEY_APTOS!;
+      const privateKeyHex = process.env.RELAYER_PRIVATE_KEY_APTOS!;
+      const privateKey = new Ed25519PrivateKey(privateKeyHex.replace('0x', ''));
       const account = await this.aptosClient.account.deriveAccountFromPrivateKey({
         privateKey
       });
@@ -220,7 +222,8 @@ export class RelayerService {
         functionArguments: [
           params.escrowId,
           params.secret
-        ]
+        ],
+        typeArguments: []
       };
 
       const tx = await this.aptosClient.transaction.build.simple({
@@ -228,7 +231,8 @@ export class RelayerService {
         data: payload
       });
 
-      const privateKey = process.env.RELAYER_PRIVATE_KEY_APTOS!;
+      const privateKeyHex = process.env.RELAYER_PRIVATE_KEY_APTOS!;
+      const privateKey = new Ed25519PrivateKey(privateKeyHex.replace('0x', ''));
       const account = await this.aptosClient.account.deriveAccountFromPrivateKey({
         privateKey
       });

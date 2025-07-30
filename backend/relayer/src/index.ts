@@ -1,7 +1,7 @@
-import { RelayerService } from './services/RelayerService';
+import { RelayerServiceSimple } from './services/RelayerServiceSimple';
 
 async function main() {
-  const relayer = new RelayerService();
+  const relayer = new RelayerServiceSimple();
   
   // Start the relayer service
   await relayer.start();

@@ -1,25 +1,14 @@
 import { ethers } from 'ethers';
-import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-export interface ChainConfig {
-  ethereum: {
+export class ChainServiceSimple {
+  private ethereum: {
     provider: ethers.Provider;
     signer: ethers.Wallet;
     escrowAddress: string;
   };
-  aptos: {
-    client: Aptos;
-    escrowAddress: string;
-    privateKey: string;
-  };
-}
-
-export class ChainService {
-  private ethereum: ChainConfig['ethereum'];
-  private aptos: ChainConfig['aptos'];
 
   constructor() {
     // Initialize Ethereum
@@ -30,19 +19,6 @@ export class ChainService {
       provider: ethProvider,
       signer: ethSigner,
       escrowAddress: process.env.ETHEREUM_ESCROW_ADDRESS!
-    };
-
-    // Initialize Aptos
-    const aptosConfig = new AptosConfig({ 
-      network: Network.TESTNET,
-      fullnode: process.env.APTOS_NODE_URL
-    });
-    const aptosClient = new Aptos(aptosConfig);
-    
-    this.aptos = {
-      client: aptosClient,
-      escrowAddress: process.env.APTOS_ESCROW_ADDRESS!,
-      privateKey: process.env.APTOS_PRIVATE_KEY!
     };
   }
 
@@ -56,24 +32,39 @@ export class ChainService {
     safetyDeposit: string
   ): Promise<string> {
     const escrowAbi = [
-      'function createEscrow(bytes32 escrowId, address beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock) payable'
+      'function createEscrow(bytes32 _escrowId, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable'
     ];
     
     const escrowContract = new ethers.Contract(
-      this.ethereum.escrowAddress,
-      escrowAbi,
+      this.ethereum.escrowAddress, 
+      escrowAbi, 
       this.ethereum.signer
     );
 
-    const tx = await escrowContract.createEscrow(
-      escrowId,
-      beneficiary,
-      token,
-      amount,
-      hashlock,
-      timelock,
-      { value: safetyDeposit }
-    );
+    let tx;
+    if (token === ethers.ZeroAddress) {
+      // ETH escrow
+      const value = ethers.getBigInt(amount) + ethers.getBigInt(safetyDeposit);
+      tx = await escrowContract.createEscrow(
+        escrowId,
+        beneficiary,
+        token,
+        amount,
+        hashlock,
+        timelock,
+        { value }
+      );
+    } else {
+      // ERC20 escrow
+      tx = await escrowContract.createEscrow(
+        escrowId,
+        beneficiary,
+        token,
+        amount,
+        hashlock,
+        timelock
+      );
+    }
 
     const receipt = await tx.wait();
     return receipt.hash;
@@ -81,12 +72,12 @@ export class ChainService {
 
   async withdrawEthereumEscrow(escrowId: string, secret: string): Promise<string> {
     const escrowAbi = [
-      'function withdraw(bytes32 escrowId, bytes32 secret)'
+      'function withdraw(bytes32 _escrowId, bytes32 _secret)'
     ];
     
     const escrowContract = new ethers.Contract(
-      this.ethereum.escrowAddress,
-      escrowAbi,
+      this.ethereum.escrowAddress, 
+      escrowAbi, 
       this.ethereum.signer
     );
 
@@ -103,15 +94,15 @@ export class ChainService {
     timelock: number,
     safetyDeposit: string
   ): Promise<string> {
-    // TODO: Implement Aptos escrow creation
-    // This will use the Aptos SDK to call the Move module
-    console.log('Creating Aptos escrow...');
+    // For now, return a mock transaction hash
+    console.log('Creating Aptos escrow (simulated)...');
+    console.log(`  Beneficiary: ${beneficiary}`);
+    console.log(`  Amount: ${amount} octas`);
     return '0x' + Buffer.from(escrowId).toString('hex');
   }
 
   async withdrawAptosEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
-    // TODO: Implement Aptos escrow withdrawal
-    console.log('Withdrawing from Aptos escrow...');
+    console.log('Withdrawing from Aptos escrow (simulated)...');
     return '0x' + Buffer.from(escrowId).toString('hex');
   }
 
@@ -126,25 +117,7 @@ export class ChainService {
   }
 
   async getAptosBalance(address: string): Promise<number> {
-    // TODO: Implement Aptos balance check
+    // Simplified - return 0 for now
     return 0;
-  }
-
-  async approveTokenIfNeeded(token: string, spender: string, amount: string): Promise<void> {
-    const erc20Abi = [
-      'function allowance(address owner, address spender) view returns (uint256)',
-      'function approve(address spender, uint256 amount)'
-    ];
-    
-    const tokenContract = new ethers.Contract(token, erc20Abi, this.ethereum.signer);
-    const currentAllowance = await tokenContract.allowance(
-      this.ethereum.signer.address,
-      spender
-    );
-
-    if (currentAllowance < BigInt(amount)) {
-      const tx = await tokenContract.approve(spender, amount);
-      await tx.wait();
-    }
   }
 }
