@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { ChainServiceSimple } from './ChainServiceSimple';
+import { PriceService } from './PriceService';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -36,6 +37,7 @@ interface Fill {
 export class ResolverServiceV2 {
   private socket: Socket;
   private chainService: ChainServiceSimple;
+  private priceService: PriceService;
   private orderEngineUrl: string;
   private isProcessing: Set<string> = new Set();
   private ethereumAddress: string;
@@ -55,6 +57,7 @@ export class ResolverServiceV2 {
   constructor() {
     this.orderEngineUrl = process.env.ORDER_ENGINE_URL || 'http://localhost:3001';
     this.chainService = new ChainServiceSimple();
+    this.priceService = new PriceService();
     this.ethereumAddress = process.env.ETHEREUM_RESOLVER_ADDRESS!;
     this.aptosAddress = process.env.APTOS_RESOLVER_ADDRESS!;
     
@@ -127,9 +130,41 @@ export class ResolverServiceV2 {
   }
 
   private async checkProfitability(order: Order): Promise<boolean> {
-    // TODO: Implement real profitability check with exchange rates
-    // For now, accept all orders in testnet
-    return true;
+    try {
+      // Get exchange rate
+      const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
+      const toToken = order.toToken === ethers.ZeroAddress ? 'APT' : order.toToken;
+      
+      const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
+      
+      // Calculate expected output with resolver margin
+      const expectedOutput = this.priceService.calculateOutputAmount(
+        ethers.formatEther(order.fromAmount), 
+        exchangeRate,
+        true // Apply margin
+      );
+      
+      // Compare with minimum required
+      const minRequired = order.toChain === 'ETHEREUM' 
+        ? ethers.formatEther(order.minToAmount)
+        : (parseInt(order.minToAmount) / 100000000).toString(); // APT has 8 decimals
+      
+      console.log(`   💱 Exchange rate: 1 ${fromToken} = ${exchangeRate.toFixed(4)} ${toToken}`);
+      console.log(`   📊 Expected output: ${expectedOutput} ${toToken}`);
+      console.log(`   📊 Min required: ${minRequired} ${toToken}`);
+      
+      const isProfitable = parseFloat(expectedOutput) >= parseFloat(minRequired);
+      
+      if (isProfitable) {
+        console.log(`   ✅ Profitable with ${((parseFloat(expectedOutput) / parseFloat(minRequired) - 1) * 100).toFixed(2)}% margin`);
+      }
+      
+      return isProfitable;
+    } catch (error) {
+      console.error('Error checking profitability:', error);
+      // In testnet, accept orders even if price check fails
+      return true;
+    }
   }
 
   private async checkBalance(order: Order): Promise<boolean> {
@@ -141,14 +176,33 @@ export class ResolverServiceV2 {
   private async createDestinationEscrow(order: Order) {
     console.log(`\n📦 Creating destination escrow for order ${order.id}`);
     
+    // Get exchange rate and calculate actual output amount
+    const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
+    const toToken = order.toToken === ethers.ZeroAddress ? 'APT' : order.toToken;
+    
+    const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
+    const outputAmount = this.priceService.calculateOutputAmount(
+      ethers.formatEther(order.fromAmount),
+      exchangeRate,
+      true // Apply margin
+    );
+    
+    // Convert output amount to proper units
+    const actualOutputAmount = order.toChain === 'ETHEREUM'
+      ? ethers.parseEther(outputAmount).toString()
+      : Math.floor(parseFloat(outputAmount) * 100000000).toString(); // APT has 8 decimals
+    
+    console.log(`   💱 Using exchange rate: 1 ${fromToken} = ${exchangeRate.toFixed(4)} ${toToken}`);
+    console.log(`   📊 Output amount: ${outputAmount} ${toToken}`);
+    
     // Generate secret for this fill
     const secret = ethers.randomBytes(32);
     const secretHash = ethers.keccak256(secret);
     
-    // Create fill record
+    // Create fill record with actual output amount
     const fill = await this.createFill(order.id, {
       resolver: order.toChain === 'ETHEREUM' ? this.ethereumAddress : this.aptosAddress,
-      amount: order.minToAmount,
+      amount: actualOutputAmount,
       secretHash,
       secretIndex: 0,
       status: 'PENDING'
@@ -170,7 +224,7 @@ export class ResolverServiceV2 {
           escrowId,
           order.receiver, // User is beneficiary on destination
           order.toToken,
-          order.minToAmount,
+          actualOutputAmount, // Use calculated output amount
           secretHash,
           timelock,
           safetyDeposit
@@ -180,7 +234,7 @@ export class ResolverServiceV2 {
         destTxHash = await this.chainService.createAptosEscrow(
           ethers.getBytes(escrowId),
           order.receiver, // User is beneficiary on destination
-          order.minToAmount,
+          actualOutputAmount, // Use calculated output amount
           ethers.getBytes(secretHash),
           timelock,
           safetyDeposit
