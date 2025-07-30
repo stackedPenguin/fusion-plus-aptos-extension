@@ -52,7 +52,7 @@ export class AptosChainService {
     this.privateKeyHex = Buffer.from(keyPair.secretKey).toString('hex');
     
     console.log('Public key:', this.publicKeyHex);
-    console.log('Address:', this.address);
+    console.log('Address from env:', this.address);
   }
 
   async createEscrow(
@@ -209,10 +209,16 @@ export class AptosChainService {
   }
 
   private async getAccount() {
-    const response = await axios.get(
-      `${this.aptosNodeUrl}/v1/accounts/${this.address}`
-    );
-    return response.data;
+    try {
+      console.log(`Fetching account info for: ${this.address}`);
+      const response = await axios.get(
+        `${this.aptosNodeUrl}/v1/accounts/${this.address}`
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error(`Failed to get account ${this.address}:`, error.response?.data || error.message);
+      throw error;
+    }
   }
 
   private async generateSigningMessage(rawTxn: any): Promise<Uint8Array> {
