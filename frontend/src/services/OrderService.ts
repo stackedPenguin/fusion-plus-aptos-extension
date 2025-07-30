@@ -32,12 +32,12 @@ const ORDER_TYPE = {
   Order: [
     { name: 'fromChain', type: 'string' },
     { name: 'toChain', type: 'string' },
-    { name: 'fromToken', type: 'address' },
-    { name: 'toToken', type: 'address' },
+    { name: 'fromToken', type: 'string' }, // Changed to string to support cross-chain tokens
+    { name: 'toToken', type: 'string' }, // Changed to string to support cross-chain tokens
     { name: 'fromAmount', type: 'uint256' },
     { name: 'minToAmount', type: 'uint256' },
-    { name: 'maker', type: 'address' },
-    { name: 'receiver', type: 'address' },
+    { name: 'maker', type: 'string' }, // Changed to string to support cross-chain addresses
+    { name: 'receiver', type: 'string' }, // Changed to string to support cross-chain addresses
     { name: 'deadline', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
     { name: 'partialFillAllowed', type: 'bool' },

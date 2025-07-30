@@ -61,7 +61,7 @@ export class PermitService {
       // Connect contract with signer
       const permitWithSigner = this.permitContract.connect(signer);
       
-      // Execute transfer with permit using the function directly
+      // Execute transfer with permit
       const tx = await (permitWithSigner as any).transferWithPermit(
         permit.owner,
         permit.spender,

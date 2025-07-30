@@ -159,7 +159,7 @@ export class PermitService {
     // Create order typed data
     const typedData = {
       domain: {
-        name: 'Fusion+ Cross-Chain Swap',
+        name: 'FusionPlusAptos',
         version: '1',
         chainId: Number(chainId)
       },
@@ -167,11 +167,11 @@ export class PermitService {
         Order: [
           { name: 'fromChain', type: 'string' },
           { name: 'toChain', type: 'string' },
-          { name: 'fromToken', type: 'address' },
+          { name: 'fromToken', type: 'string' }, // Changed to string to support cross-chain tokens
           { name: 'toToken', type: 'string' },
           { name: 'fromAmount', type: 'uint256' },
           { name: 'minToAmount', type: 'uint256' },
-          { name: 'maker', type: 'address' },
+          { name: 'maker', type: 'string' }, // Changed to string to support cross-chain addresses
           { name: 'receiver', type: 'string' },
           { name: 'deadline', type: 'uint256' },
           { name: 'nonce', type: 'uint256' },

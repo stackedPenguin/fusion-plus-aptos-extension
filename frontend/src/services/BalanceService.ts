@@ -13,6 +13,7 @@ export class BalanceService {
 
   async getAptosBalance(address: string): Promise<string> {
     try {
+      // Use the view function endpoint to get APT balance
       const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
         method: 'POST',
         headers: {
@@ -30,7 +31,8 @@ export class BalanceService {
       }
 
       const result = await response.json();
-      const balance = BigInt(result[0] || '0');
+      const balance = result[0] || '0';
+      
       // Aptos uses 8 decimals
       return (Number(balance) / 1e8).toFixed(6);
     } catch (error) {

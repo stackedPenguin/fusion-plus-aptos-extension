@@ -38,6 +38,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [swapStatus, setSwapStatus] = useState<SwapStatus>({ stage: 'idle', message: '' });
   const [estimatedOutput, setEstimatedOutput] = useState<string>('');
   const [focusedInput, setFocusedInput] = useState<'from' | 'to' | null>(null);
+  const [ethPrice, setEthPrice] = useState<number>(0);
+  const [aptPrice, setAptPrice] = useState<number>(0);
 
   // Get current balances
   const currentBalances = {
@@ -76,8 +78,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           ? ethers.parseEther(fromAmount).toString()
           : (parseFloat(fromAmount) * 1e8).toString(),
         minToAmount: toChain === Chain.ETHEREUM
-          ? ethers.parseEther(estimatedOutput).toString()
-          : (parseFloat(estimatedOutput) * 1e8).toString(),
+          ? ethers.parseEther((parseFloat(estimatedOutput) * 0.995).toString()).toString() // 0.5% slippage
+          : Math.floor(parseFloat(estimatedOutput) * 1e8 * 0.995).toString(), // 0.5% slippage for resolver margin
         maker: fromChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
@@ -85,8 +87,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         partialFillAllowed: false
       };
 
-      let finalOrderData = orderData;
-      let signature;
+      let finalOrderData: any;
+      let signature: string;
 
       // If source chain is Ethereum, create a permit for automatic transfer
       if (fromChain === Chain.ETHEREUM) {
@@ -106,10 +108,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           
           console.log('Order with permit created:', orderWithPermit);
         } catch (error) {
-          console.error('Failed to create permit, falling back to manual escrow:', error);
-          // Fall back to regular order without permit
-          signature = await orderService.signOrder(orderData, ethSigner);
-          finalOrderData = { ...orderData, signature };
+          console.error('Failed to create permit:', error);
+          throw new Error(`Failed to create permit: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       } else {
         // For non-Ethereum source chains, use regular signature
@@ -120,7 +120,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       setSwapStatus({ stage: 'submitting', message: 'Submitting order...' });
       
       // Submit the order
-      const result = await orderService.createOrder(finalOrderData);
+      const result = await orderService.createOrder(finalOrderData as any);
 
       const orderId = result?.id || orderData.nonce;
       setSwapStatus({ 
@@ -198,22 +198,31 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     }
   };
 
-  // Fetch exchange rate
+  // Fetch exchange rate and USD prices
   useEffect(() => {
-    const fetchRate = async () => {
+    const fetchRates = async () => {
       const fromToken = fromChain === Chain.ETHEREUM ? 'ETH' : 'APT';
       const toToken = toChain === Chain.ETHEREUM ? 'ETH' : 'APT';
       
       try {
+        // Fetch exchange rate
         const rate = await priceService.getExchangeRate(fromToken, toToken);
         setExchangeRate(rate);
+        
+        // Fetch USD prices
+        const [ethUsdPrice, aptUsdPrice] = await Promise.all([
+          priceService.getUSDPrice('ETH'),
+          priceService.getUSDPrice('APT')
+        ]);
+        setEthPrice(ethUsdPrice);
+        setAptPrice(aptUsdPrice);
       } catch (error) {
-        console.error('Failed to fetch exchange rate:', error);
+        console.error('Failed to fetch rates:', error);
       }
     };
 
-    fetchRate();
-    const interval = setInterval(fetchRate, 30000); // Update every 30 seconds
+    fetchRates();
+    const interval = setInterval(fetchRates, 30000); // Update every 30 seconds
     return () => clearInterval(interval);
   }, [fromChain, toChain, priceService]);
 
@@ -299,7 +308,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
           {fromAmount && exchangeRate && (
             <div className="token-value">
-              ≈ ${(parseFloat(fromAmount) * (fromChain === Chain.ETHEREUM ? 3769.46 : 4.45)).toFixed(2)}
+              ≈ ${(parseFloat(fromAmount) * (fromChain === Chain.ETHEREUM ? ethPrice : aptPrice)).toFixed(2)}
             </div>
           )}
         </div>
@@ -340,7 +349,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
           {estimatedOutput && (
             <div className="token-value">
-              ≈ ${(parseFloat(estimatedOutput) * (toChain === Chain.ETHEREUM ? 3769.46 : 4.45)).toFixed(2)}
+              ≈ ${(parseFloat(estimatedOutput) * (toChain === Chain.ETHEREUM ? ethPrice : aptPrice)).toFixed(2)}
             </div>
           )}
         </div>

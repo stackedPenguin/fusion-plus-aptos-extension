@@ -48,16 +48,29 @@ function App() {
     if (aptosAccount?.address) {
       const updateBalance = async () => {
         try {
-          const response = await fetch(
-            'https://fullnode.testnet.aptoslabs.com/v1/accounts/' + aptosAccount.address + '/resource/0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>'
-          );
+          const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              function: '0x1::coin::balance',
+              type_arguments: ['0x1::aptos_coin::AptosCoin'],
+              arguments: [aptosAccount.address]
+            })
+          });
+          
           if (response.ok) {
-            const data = await response.json();
-            const balance = data.data.coin.value;
-            setAptosBalance((parseInt(balance) / 100000000).toFixed(4));
+            const result = await response.json();
+            const balance = result[0] || '0';
+            setAptosBalance((Number(balance) / 100000000).toFixed(6));
+          } else {
+            console.error('Failed to fetch balance:', await response.text());
+            setAptosBalance('0');
           }
         } catch (error) {
           console.error('Failed to get APT balance:', error);
+          setAptosBalance('0');
         }
       };
       updateBalance();
