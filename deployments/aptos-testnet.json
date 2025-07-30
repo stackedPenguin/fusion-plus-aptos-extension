@@ -1,0 +1,8 @@
+{
+  "network": "testnet",
+  "deployerAddress": "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0",
+  "escrowModule": "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0::escrow",
+  "layerzeroModule": "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0::layerzero_adapter",
+  "deployTxHash": "0xfa929b71f1b62b2e725546c072c6eaa51707baa6bb708e24ce7c353e4ac628d2",
+  "timestamp": "2025-01-29T05:24:17.217Z"
+}

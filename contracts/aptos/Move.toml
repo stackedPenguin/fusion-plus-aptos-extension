@@ -4,8 +4,9 @@ version = "1.0.0"
 upgrade_policy = "compatible"
 
 [addresses]
-fusion_plus = "0x36f5260acde988971c690510e4f36b166e614e7dc16bb3b86dd19c758e38f577"
-escrow_addr = "0x36f5260acde988971c690510e4f36b166e614e7dc16bb3b86dd19c758e38f577"
+fusion_plus = "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0"
+escrow_addr = "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0"
+FusionPlusAptos = "0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", rev = "mainnet", subdir = "aptos-move/framework/aptos-framework" }

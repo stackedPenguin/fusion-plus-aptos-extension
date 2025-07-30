@@ -55,19 +55,31 @@ async function deployAptosContracts() {
 
     console.log(`\n📋 Deployer Account: ${deployerAccount.accountAddress.toString()}`);
 
-    // Check balance
+    // Check balance using view function
     let needsFunding = false;
+    let currentBalance = 0n;
     try {
-      const resources = await aptos.getAccountResources({ accountAddress: deployerAccount.accountAddress });
-      const aptBalance = resources.find(r => r.type === '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
+      const viewPayload = {
+        function: "0x1::coin::balance",
+        type_arguments: ["0x1::aptos_coin::AptosCoin"],
+        arguments: [deployerAccount.accountAddress.toString()]
+      };
       
-      if (!aptBalance || BigInt(aptBalance.data.coin.value) < BigInt(100000000)) {
-        needsFunding = true;
+      const response = await axios.post('https://fullnode.testnet.aptoslabs.com/v1/view', viewPayload);
+      
+      if (response.data && response.data.length > 0) {
+        currentBalance = BigInt(response.data[0]);
+        const aptBalance = currentBalance / BigInt(100000000);
+        console.log(`   Balance: ${aptBalance.toString()} APT`);
+        
+        if (currentBalance < BigInt(100000000)) {
+          needsFunding = true;
+        }
       } else {
-        console.log(`   Balance: ${(BigInt(aptBalance.data.coin.value) / BigInt(100000000)).toString()} APT`);
+        needsFunding = true;
       }
     } catch (error) {
-      // Account doesn't exist yet
+      console.log('   Balance check error:', error.message);
       needsFunding = true;
     }
     
@@ -95,9 +107,21 @@ async function deployAptosContracts() {
 
     // Recheck balance after funding
     try {
-      const resources = await aptos.getAccountResources({ accountAddress: deployerAccount.accountAddress });
-      const aptBalance = resources.find(r => r.type === '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
-      console.log(`\n   Current Balance: ${(BigInt(aptBalance.data.coin.value) / BigInt(100000000)).toString()} APT`);
+      const viewPayload = {
+        function: "0x1::coin::balance",
+        type_arguments: ["0x1::aptos_coin::AptosCoin"],
+        arguments: [deployerAccount.accountAddress.toString()]
+      };
+      
+      const response = await axios.post('https://fullnode.testnet.aptoslabs.com/v1/view', viewPayload);
+      
+      if (response.data && response.data.length > 0) {
+        const balance = BigInt(response.data[0]);
+        console.log(`\n   Current Balance: ${(balance / BigInt(100000000)).toString()} APT`);
+      } else {
+        console.log('   ❌ Account still not funded. Please fund manually and try again.');
+        return;
+      }
     } catch (error) {
       console.log('   ❌ Account still not funded. Please fund manually and try again.');
       return;
@@ -113,11 +137,10 @@ async function deployAptosContracts() {
     
     try {
       // Deploy both modules in one transaction
-      const moduleBytecodes = [escrowModule, layerzeroModule];
-      
-      const deployTxn = await aptos.publishModuleTransaction({
-        account: deployerAccount,
-        moduleBytecode: moduleBytecodes,
+      const deployTxn = await aptos.publishPackageTransaction({
+        account: deployerAccount.accountAddress,
+        metadataBytes: new Uint8Array(), // Empty metadata for simple deployment
+        moduleBytecode: [escrowModule, layerzeroModule],
       });
       
       const deployTxnRes = await aptos.signAndSubmitTransaction({
@@ -125,8 +148,16 @@ async function deployAptosContracts() {
         transaction: deployTxn,
       });
       
-      await aptos.waitForTransaction({ transactionHash: deployTxnRes.hash });
-      console.log(`   ✅ Modules deployed: ${deployTxnRes.hash}`);
+      console.log(`   ⏳ Waiting for transaction...`);
+      const txnReceipt = await aptos.waitForTransaction({ 
+        transactionHash: deployTxnRes.hash 
+      });
+      
+      if (txnReceipt.success) {
+        console.log(`   ✅ Modules deployed: ${deployTxnRes.hash}`);
+      } else {
+        throw new Error(`Deployment failed: ${txnReceipt.vm_status}`);
+      }
 
       // Initialize modules
       console.log('\n🔧 Initializing Modules...');
