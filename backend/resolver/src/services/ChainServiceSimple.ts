@@ -42,10 +42,12 @@ export class ChainServiceSimple {
     amount: string,
     hashlock: string,
     timelock: number,
-    safetyDeposit: string
+    safetyDeposit: string,
+    depositor?: string // Optional depositor for createEscrowFor
   ): Promise<string> {
     const escrowAbi = [
-      'function createEscrow(bytes32 _escrowId, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable'
+      'function createEscrow(bytes32 _escrowId, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable',
+      'function createEscrowFor(bytes32 _escrowId, address _depositor, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable'
     ];
     
     const escrowContract = new ethers.Contract(
@@ -55,29 +57,60 @@ export class ChainServiceSimple {
     );
 
     let tx;
-    if (token === ethers.ZeroAddress) {
-      // ETH escrow
-      const value = ethers.getBigInt(amount) + ethers.getBigInt(safetyDeposit);
-      tx = await escrowContract.createEscrow(
-        escrowId,
-        beneficiary,
-        token,
-        amount,
-        hashlock,
-        timelock,
-        { value }
-      );
+    if (depositor) {
+      // Use createEscrowFor when depositor is specified (Fusion+ flow)
+      if (token === ethers.ZeroAddress) {
+        // ETH escrow
+        const value = ethers.getBigInt(amount) + ethers.getBigInt(safetyDeposit);
+        tx = await escrowContract.createEscrowFor(
+          escrowId,
+          depositor,
+          beneficiary,
+          token,
+          amount,
+          hashlock,
+          timelock,
+          { value }
+        );
+      } else {
+        // ERC20 escrow - still needs safety deposit in ETH
+        tx = await escrowContract.createEscrowFor(
+          escrowId,
+          depositor,
+          beneficiary,
+          token,
+          amount,
+          hashlock,
+          timelock,
+          { value: safetyDeposit } // Safety deposit required even for ERC20
+        );
+      }
     } else {
-      // ERC20 escrow - still needs safety deposit in ETH
-      tx = await escrowContract.createEscrow(
-        escrowId,
-        beneficiary,
-        token,
-        amount,
-        hashlock,
-        timelock,
-        { value: safetyDeposit } // Safety deposit required even for ERC20
-      );
+      // Use regular createEscrow when no depositor specified
+      if (token === ethers.ZeroAddress) {
+        // ETH escrow
+        const value = ethers.getBigInt(amount) + ethers.getBigInt(safetyDeposit);
+        tx = await escrowContract.createEscrow(
+          escrowId,
+          beneficiary,
+          token,
+          amount,
+          hashlock,
+          timelock,
+          { value }
+        );
+      } else {
+        // ERC20 escrow - still needs safety deposit in ETH
+        tx = await escrowContract.createEscrow(
+          escrowId,
+          beneficiary,
+          token,
+          amount,
+          hashlock,
+          timelock,
+          { value: safetyDeposit } // Safety deposit required even for ERC20
+        );
+      }
     }
 
     const receipt = await tx.wait();

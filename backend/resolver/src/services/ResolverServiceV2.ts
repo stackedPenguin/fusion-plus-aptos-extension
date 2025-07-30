@@ -331,6 +331,17 @@ export class ResolverServiceV2 {
           
           if (allowance >= BigInt(order.fromAmount)) {
             console.log(`   ✅ WETH allowance sufficient: ${allowance.toString()}`);
+            
+            // Also check WETH balance
+            const wethBalance = await wethService.getBalance(order.maker);
+            console.log(`   💰 User WETH balance: ${ethers.formatEther(wethBalance)} WETH`);
+            
+            if (BigInt(wethBalance) < BigInt(order.fromAmount)) {
+              console.log(`   ❌ Insufficient WETH balance: ${ethers.formatEther(wethBalance)} < ${ethers.formatEther(order.fromAmount)}`);
+              console.log(`   ⏳ User needs to wrap more ETH to WETH...`);
+              return;
+            }
+            
             console.log(`   📝 Creating source escrow (WETH will be transferred automatically)...`);
             // Continue to create source escrow - the escrow contract will handle the transfer
           } else {
@@ -379,7 +390,7 @@ export class ResolverServiceV2 {
           // Create source escrow ID
           const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
           
-          // Create source escrow with transferred funds
+          // Create source escrow with user as depositor (Fusion+ flow)
           const sourceTxHash = await this.chainService.createEthereumEscrow(
             sourceEscrowId,
             this.ethereumAddress, // Resolver is beneficiary on source
@@ -387,7 +398,8 @@ export class ResolverServiceV2 {
             order.fromAmount,
             secretHash,
             timelock,
-            ethers.parseEther('0.001').toString() // Safety deposit
+            ethers.parseEther('0.001').toString(), // Safety deposit
+            order.maker // User is the depositor - escrow will pull WETH from them
           );
           
           console.log(`   ✅ Source escrow created automatically: ${sourceTxHash}`);
@@ -616,6 +628,17 @@ export class ResolverServiceV2 {
       }
       
       console.log('   🎉 Swap completed! Funds have been transferred to the user.');
+      
+      // Emit completion event
+      this.socket.emit('swap:completed', {
+        orderId: fill.orderId,
+        fillId: fill.id,
+        sourceChain: order?.fromChain || 'ETHEREUM',
+        destinationChain: order?.toChain || 'APTOS',
+        fromAmount: order?.fromAmount || fill.amount,
+        toAmount: order?.toChain === 'APTOS' ? order?.minToAmount : fill.amount,
+        txHash: withdrawTx
+      });
       
       // Update final status
       await this.updateFillStatus(fill.orderId, fill.id, 'COMPLETED');

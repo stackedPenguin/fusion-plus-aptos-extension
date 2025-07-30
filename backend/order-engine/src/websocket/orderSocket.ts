@@ -93,6 +93,14 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
       }
     });
 
+    socket.on('swap:completed', (data: any) => {
+      console.log('Relaying swap:completed event:', data);
+      io.emit('swap:completed', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:completed', data);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('Client disconnected:', socket.id);
     });

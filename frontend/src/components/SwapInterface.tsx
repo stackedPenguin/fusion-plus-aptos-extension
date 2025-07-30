@@ -41,6 +41,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [focusedInput, setFocusedInput] = useState<'from' | 'to' | null>(null);
   const [ethPrice, setEthPrice] = useState<number>(0);
   const [aptPrice, setAptPrice] = useState<number>(0);
+  const [wethBalance, setWethBalance] = useState<string>('0');
+  const [showWrapConfirmation, setShowWrapConfirmation] = useState(false);
+  const [wrapAmount, setWrapAmount] = useState<string>('0');
+  const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
+  const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
 
   // Get current balances
   const currentBalances = {
@@ -73,34 +78,38 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       if (isETHSwap) {
         const wethService = new WETHService(ethSigner);
         
-        // Check if user already has enough WETH
-        const wethStatus = await wethService.checkWETHReadiness(
-          ethAccount,
-          CONTRACTS.ETHEREUM.ESCROW, // Check approval for escrow contract
-          swapAmount
-        );
+        // Check user's current WETH balance
+        const currentWethBalance = await wethService.getBalance(ethAccount);
+        console.log('Current WETH balance:', ethers.formatEther(currentWethBalance));
         
-        if (!wethStatus.hasEnoughWETH) {
-          // Show confirmation dialog
-          const shouldWrap = window.confirm(
-            `To continue with the swap, ${fromAmount} ETH needs to be wrapped to WETH.\n\n` +
-            `This is required because permits only work with ERC20 tokens, not native ETH.\n\n` +
-            `Click OK to wrap ETH to WETH, or Cancel to abort the swap.`
-          );
+        // Check if user needs to wrap more ETH
+        const needsWrapping = BigInt(currentWethBalance) < BigInt(swapAmount);
+        
+        if (needsWrapping) {
+          const amountToWrap = BigInt(swapAmount) - BigInt(currentWethBalance);
+          setWrapConfirmationData({ amount: ethers.formatEther(amountToWrap), isVisible: true });
+          setIsLoading(false);
+          return;
+        }
           
-          if (!shouldWrap) {
-            setSwapStatus({ stage: 'idle', message: 'Swap cancelled' });
-            setIsLoading(false);
-            return;
-          }
-          
-          setSwapStatus({ stage: 'wrapping_eth', message: 'Wrapping ETH to WETH...' });
+          setSwapStatus({ stage: 'wrapping_eth', message: `Wrapping ${ethers.formatEther(amountToWrap)} ETH to WETH...` });
           try {
-            const wrapTx = await wethService.wrapETH(swapAmount);
+            // Only wrap the difference needed
+            const wrapTx = await wethService.wrapETH(amountToWrap.toString());
             console.log('ETH wrapped to WETH:', wrapTx);
+            
+            // Verify WETH balance after wrapping
+            const newWethBalance = await wethService.getBalance(ethAccount);
+            console.log('WETH balance after wrapping:', ethers.formatEther(newWethBalance));
+            
+            if (BigInt(newWethBalance) < BigInt(swapAmount)) {
+              throw new Error(`Still insufficient WETH after wrapping. Balance: ${ethers.formatEther(newWethBalance)}, Required: ${ethers.formatEther(swapAmount)}`);
+            }
           } catch (error) {
             throw new Error(`Failed to wrap ETH: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
+        } else {
+          console.log('User already has enough WETH, skipping wrap step');
         }
         
         // Step 2: Check and handle WETH approval for the Escrow contract
@@ -206,10 +215,26 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         }
       });
 
+      socket.on('swap:completed', (data: any) => {
+        if (data.orderId === orderId) {
+          setSwapStatus({
+            stage: 'completed',
+            message: `Swap completed successfully!`,
+            orderId
+          });
+          
+          // Update WETH balance after successful swap
+          if (fromChain === Chain.ETHEREUM) {
+            fetchWethBalance();
+          }
+        }
+      });
+
       // Clean up after 30 minutes
       setTimeout(() => {
         orderService.unsubscribeFromOrderUpdates(orderId);
         socket.off('escrow:destination:created');
+        socket.off('swap:completed');
         if (swapStatus.stage === 'waiting') {
           setSwapStatus({
             stage: 'idle',
@@ -242,6 +267,44 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     } else {
       setFromAmount(aptosBalance);
     }
+  };
+
+  const handleWrapConfirm = async () => {
+    setWrapConfirmationData({ ...wrapConfirmationData, isVisible: false });
+    setIsLoading(true);
+    
+    try {
+      const wethService = new WETHService(ethSigner);
+      const amountToWrapWei = ethers.parseEther(wrapConfirmationData.amount).toString();
+      
+      setSwapStatus({ stage: 'wrapping_eth', message: `Wrapping ${wrapConfirmationData.amount} ETH to WETH...` });
+      
+      const wrapTx = await wethService.wrapETH(amountToWrapWei);
+      console.log('ETH wrapped to WETH:', wrapTx);
+      
+      // Update WETH balance
+      const newWethBalance = await wethService.getBalance(ethAccount);
+      setWethBalance(ethers.formatEther(newWethBalance));
+      
+      // Switch to WETH in the UI
+      setSelectedToken('WETH');
+      
+      // Continue with the swap
+      setSwapStatus({ stage: 'submitting', message: 'Continuing with swap...' });
+      await handleSwap();
+    } catch (error) {
+      console.error('Failed to wrap ETH:', error);
+      setSwapStatus({ 
+        stage: 'error', 
+        message: `Failed to wrap ETH: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      });
+      setIsLoading(false);
+    }
+  };
+
+  const handleWrapCancel = () => {
+    setWrapConfirmationData({ ...wrapConfirmationData, isVisible: false });
+    setSwapStatus({ stage: 'idle', message: '' });
   };
 
   // Fetch exchange rate and USD prices
@@ -289,6 +352,27 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     }
   }, [fromAmount, exchangeRate, toChain]);
 
+  // Function to fetch WETH balance
+  const fetchWethBalance = async () => {
+    if (ethAccount && ethSigner) {
+      try {
+        const wethService = new WETHService(ethSigner);
+        const balance = await wethService.getBalance(ethAccount);
+        setWethBalance(ethers.formatEther(balance));
+      } catch (error) {
+        console.error('Failed to fetch WETH balance:', error);
+        setWethBalance('0');
+      }
+    }
+  };
+
+  // Fetch WETH balance
+  useEffect(() => {
+    fetchWethBalance();
+    const interval = setInterval(fetchWethBalance, 5000); // Update every 5 seconds
+    return () => clearInterval(interval);
+  }, [ethAccount, ethSigner]);
+
   const getButtonText = () => {
     if (!ethAccount || !aptosAccount) {
       return 'Connect Wallets';
@@ -327,7 +411,16 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           <div className="token-input-header">
             <span className="token-input-label">From</span>
             <div className="token-balance">
-              Balance: {fromBalance}
+              {fromChain === Chain.ETHEREUM ? (
+                <>
+                  <span>ETH: {ethBalance}</span>
+                  {parseFloat(wethBalance) > 0 && (
+                    <span style={{ marginLeft: '10px' }}>WETH: {parseFloat(wethBalance).toFixed(4)}</span>
+                  )}
+                </>
+              ) : (
+                <span>Balance: {fromBalance}</span>
+              )}
               {parseFloat(fromBalance) > 0 && (
                 <span className="max-button" onClick={handleMaxClick}>MAX</span>
               )}
@@ -339,7 +432,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                 {fromChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
               </div>
               <span className="token-symbol">
-                {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+                {fromChain === Chain.ETHEREUM ? selectedToken : 'APT'}
               </span>
             </div>
             <input
@@ -410,28 +503,63 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
         )}
 
+        {/* Wrap Confirmation Dialog */}
+        {wrapConfirmationData.isVisible && (
+          <div className="wrap-confirmation-dialog">
+            <div className="confirmation-header">
+              <h3>Wrap ETH to WETH</h3>
+              <p>To continue, you need to wrap your ETH to WETH for the swap.</p>
+            </div>
+            <div className="confirmation-details">
+              <div className="detail-row">
+                <span>Amount to wrap:</span>
+                <span className="amount">{wrapConfirmationData.amount} ETH</span>
+              </div>
+              <div className="detail-row">
+                <span>You will receive:</span>
+                <span className="amount">{wrapConfirmationData.amount} WETH</span>
+              </div>
+            </div>
+            <div className="confirmation-actions">
+              <button className="cancel-button" onClick={handleWrapCancel}>
+                Cancel
+              </button>
+              <button className="confirm-button" onClick={handleWrapConfirm}>
+                Wrap ETH
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Status Message */}
         {swapStatus.stage !== 'idle' && (
-          <div className={`swap-status ${swapStatus.stage} fade-in`}>
+          <div className={`swap-status ${swapStatus.stage} ${swapStatus.stage === 'completed' ? 'success-notification' : ''} fade-in`}>
             <div className="status-message">
               {swapStatus.stage === 'wrapping_eth' && '🔄 '}
               {swapStatus.stage === 'approving_weth' && '✅ '}
               {swapStatus.stage === 'submitting' && '📝 '}
               {swapStatus.stage === 'waiting' && '⏳ '}
               {swapStatus.stage === 'escrow_created' && '🔒 '}
-              {swapStatus.stage === 'completed' && '✅ '}
+              {swapStatus.stage === 'completed' && '🎉 '}
               {swapStatus.stage === 'error' && '❌ '}
               {swapStatus.message}
             </div>
             {swapStatus.orderId && (
               <div className="order-id">Order ID: {swapStatus.orderId.slice(0, 8)}...</div>
             )}
-            {swapStatus.escrowHash && (
+            {swapStatus.stage === 'completed' && (
+              <div className="completion-details">
+                <div className="success-icon">🎉</div>
+                <p>Your swap has been completed successfully!</p>
+                <p>Check your wallet for the received funds.</p>
+              </div>
+            )}
+            {swapStatus.escrowHash && swapStatus.stage !== 'completed' && (
               <div className="escrow-info">
                 <div className="next-step">
-                  <strong>Next Step:</strong> To complete the swap, you need to create an Ethereum escrow.
+                  <strong>Processing swap...</strong>
                   <br />
-                  <small>Note: In the full Fusion+ implementation, this would be done automatically via permit/approval.</small>
+                  <small>The resolver will complete the swap automatically.</small>
                 </div>
               </div>
             )}

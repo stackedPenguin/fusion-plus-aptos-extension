@@ -709,6 +709,10 @@ body {
   border-color: var(--error);
 }
 
+.swap-status.completed {
+  border-color: var(--success);
+}
+
 .status-message {
   font-size: 14px;
   color: var(--text-primary);
@@ -743,6 +747,143 @@ body {
   margin-top: 8px;
   color: var(--text-tertiary);
   font-size: 11px;
+}
+
+/* Wrap Confirmation Dialog */
+.wrap-confirmation-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 16px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.confirmation-header h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirmation-header p {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.confirmation-details {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-row .amount {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.cancel-button,
+.confirm-button {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancel-button {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.cancel-button:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.confirm-button {
+  background: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.confirm-button:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+/* Success Notification */
+.swap-status.success-notification {
+  background: var(--bg-primary);
+  border: 2px solid var(--success);
+  box-shadow: 0 0 20px rgba(29, 200, 114, 0.2);
+  animation: successPulse 0.5s ease-out;
+}
+
+@keyframes successPulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.completion-details {
+  text-align: center;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.success-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.completion-details p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.completion-details p:first-of-type {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* Token Display Override */
+.token-select .token-symbol {
+  min-width: 45px;
 }
 
 /* Mobile Responsive */
