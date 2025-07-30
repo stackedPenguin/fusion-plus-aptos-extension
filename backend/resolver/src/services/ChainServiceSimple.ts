@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { AptosChainService } from './AptosChainService';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -9,6 +10,7 @@ export class ChainServiceSimple {
     signer: ethers.Wallet;
     escrowAddress: string;
   };
+  private aptos: AptosChainService;
 
   constructor() {
     // Initialize Ethereum
@@ -20,6 +22,9 @@ export class ChainServiceSimple {
       signer: ethSigner,
       escrowAddress: process.env.ETHEREUM_ESCROW_ADDRESS!
     };
+
+    // Initialize Aptos
+    this.aptos = new AptosChainService();
   }
 
   async createEthereumEscrow(
@@ -94,16 +99,11 @@ export class ChainServiceSimple {
     timelock: number,
     safetyDeposit: string
   ): Promise<string> {
-    // For now, return a mock transaction hash
-    console.log('Creating Aptos escrow (simulated)...');
-    console.log(`  Beneficiary: ${beneficiary}`);
-    console.log(`  Amount: ${amount} octas`);
-    return '0x' + Buffer.from(escrowId).toString('hex');
+    return this.aptos.createEscrow(escrowId, beneficiary, amount, hashlock, timelock, safetyDeposit);
   }
 
   async withdrawAptosEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
-    console.log('Withdrawing from Aptos escrow (simulated)...');
-    return '0x' + Buffer.from(escrowId).toString('hex');
+    return this.aptos.withdrawEscrow(escrowId, secret);
   }
 
   async getEthereumBalance(address: string, token?: string): Promise<bigint> {
@@ -117,7 +117,7 @@ export class ChainServiceSimple {
   }
 
   async getAptosBalance(address: string): Promise<number> {
-    // Simplified - return 0 for now
-    return 0;
+    const balance = await this.aptos.getBalance(address);
+    return parseInt(balance);
   }
 }
