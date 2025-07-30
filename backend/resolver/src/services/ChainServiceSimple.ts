@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { AptosChainService } from './AptosChainService';
+import { AptosChainServiceV2 } from './AptosChainServiceV2';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,7 +11,7 @@ export class ChainServiceSimple {
     escrowAddress: string;
     layerZeroAdapter?: string;
   };
-  private aptos: AptosChainService;
+  private aptos: AptosChainServiceV2;
 
   constructor() {
     // Initialize Ethereum
@@ -25,9 +25,9 @@ export class ChainServiceSimple {
       layerZeroAdapter: process.env.LAYERZERO_ADAPTER_ADDRESS
     };
 
-    // Initialize Aptos with real chain service
+    // Initialize Aptos with SDK-based chain service
     try {
-      this.aptos = new AptosChainService();
+      this.aptos = new AptosChainServiceV2();
       console.log('✅ Aptos chain service initialized successfully');
     } catch (error) {
       console.error('Failed to initialize Aptos chain service:', error);

@@ -72,9 +72,10 @@ export class PriceService {
       console.log(`   ${toToken} USD price: $${toPrice}`);
       
       return rate;
-    } catch (error) {
+    } catch (error: any) {
       console.error('CoinGecko API error, using fallback rate:', error.message);
-      return this.FALLBACK_RATES[pair] || 1;
+      const fallbackKey = `${fromToken}/${toToken}`;
+      return this.FALLBACK_RATES[fallbackKey] || 1;
     }
   }
 

@@ -14,7 +14,7 @@ export class AptosChainService {
 
   constructor() {
     this.aptosNodeUrl = process.env.APTOS_NODE_URL || 'https://fullnode.testnet.aptoslabs.com';
-    this.escrowAddress = process.env.APTOS_ESCROW_MODULE || '0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0::escrow';
+    this.escrowAddress = process.env.APTOS_ESCROW_MODULE || '0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0';
     
     // Parse private key and derive public key
     const rawPrivateKey = process.env.APTOS_PRIVATE_KEY!;
@@ -76,11 +76,12 @@ export class AptosChainService {
         function: `${this.escrowAddress}::escrow::create_escrow`,
         type_arguments: [],
         arguments: [
-          Array.from(escrowId),
+          '0x' + Buffer.from(escrowId).toString('hex'),
           beneficiary,
           amount,
-          Array.from(hashlock),
-          timelock.toString()
+          '0x' + Buffer.from(hashlock).toString('hex'),
+          timelock.toString(),
+          safetyDeposit
         ]
       };
 
@@ -211,12 +212,15 @@ export class AptosChainService {
   private async getAccount() {
     try {
       console.log(`Fetching account info for: ${this.address}`);
-      const response = await axios.get(
-        `${this.aptosNodeUrl}/v1/accounts/${this.address}`
-      );
+      const url = `${this.aptosNodeUrl}/v1/accounts/${this.address}`;
+      console.log(`URL: ${url}`);
+      const response = await axios.get(url);
       return response.data;
     } catch (error: any) {
       console.error(`Failed to get account ${this.address}:`, error.response?.data || error.message);
+      if (error.config?.url) {
+        console.error(`Request URL was: ${error.config.url}`);
+      }
       throw error;
     }
   }
