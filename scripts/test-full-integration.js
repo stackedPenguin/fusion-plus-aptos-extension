@@ -18,17 +18,16 @@ async function testFullIntegration() {
   
   const provider = new ethers.JsonRpcProvider(ETH_RPC);
   
-  // Test wallets - using resolver wallet as user since it has funds
+  // Test wallets
   const userWallet = new ethers.Wallet(
-    'c8328296c9bae25ba49a936c8398778513cbc4f3472847f055e02a1ea6d7dd74', // resolver key that has funds
+    '0x9aa575bac62c0966d497971a4504d8a5b68b198608120553d38da3bba8436efe', // new user wallet
     provider
   );
   
-  // Use a different wallet as resolver for this test
-  const resolverWallet = new ethers.Wallet(
-    '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a', // test key 2
-    provider
-  );
+  // Resolver uses the configured wallet
+  const resolverPrivateKey = process.env.ETHEREUM_PRIVATE_KEY || 
+    'c8328296c9bae25ba49a936c8398778513cbc4f3472847f055e02a1ea6d7dd74';
+  const resolverWallet = new ethers.Wallet(resolverPrivateKey, provider);
   
   console.log('📋 Test Setup:');
   console.log(`  User wallet:     ${userWallet.address}`);
@@ -108,7 +107,13 @@ async function testFullIntegration() {
   
   // Wait for resolver to create destination escrow
   console.log('\n⏳ Waiting for resolver to create destination escrow...');
-  await wait(5000);
+  
+  // Wait up to 15 seconds for destination escrow
+  let waited = 0;
+  while (!destinationEscrowCreated && waited < 15000) {
+    await wait(1000);
+    waited += 1000;
+  }
   
   if (!destinationEscrowCreated) {
     console.log('  ⚠️  No resolver picked up the order yet');
