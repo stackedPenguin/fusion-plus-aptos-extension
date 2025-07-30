@@ -4,7 +4,8 @@ version = "1.0.0"
 upgrade_policy = "compatible"
 
 [addresses]
-fusion_plus = "_"
+fusion_plus = "0x36f5260acde988971c690510e4f36b166e614e7dc16bb3b86dd19c758e38f577"
+escrow_addr = "0x36f5260acde988971c690510e4f36b166e614e7dc16bb3b86dd19c758e38f577"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", rev = "mainnet", subdir = "aptos-move/framework/aptos-framework" }

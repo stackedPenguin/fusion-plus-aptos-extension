@@ -4,6 +4,7 @@ module fusion_plus::escrow {
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_std::table::{Self, Table};
+    use escrow_addr::layerzero_adapter;
 
     /// Error codes
     const E_ESCROW_ALREADY_EXISTS: u64 = 1;
@@ -101,6 +102,41 @@ module fusion_plus::escrow {
         assert!(!escrow.refunded, E_ALREADY_REFUNDED);
         
         // Verify the secret
+        let secret_hash = std::hash::sha3_256(secret);
+        assert!(secret_hash == escrow.hashlock, E_INVALID_SECRET);
+        
+        escrow.withdrawn = true;
+        
+        // Transfer escrowed coins to beneficiary
+        let amount = escrow.amount;
+        let beneficiary = escrow.beneficiary;
+        let coin_to_transfer = coin::extract(&mut escrow.escrowed_coin, amount);
+        coin::deposit(beneficiary, coin_to_transfer);
+        
+        // Transfer safety deposit to withdrawer
+        let safety_deposit = table::remove(&mut escrow_store.safety_deposits, escrow_id);
+        coin::deposit(signer::address_of(withdrawer), safety_deposit);
+    }
+
+    /// Withdraw funds using a secret revealed on another chain via LayerZero
+    public entry fun withdraw_cross_chain(
+        withdrawer: &signer,
+        escrow_id: vector<u8>
+    ) acquires EscrowStore {
+        let escrow_store = borrow_global_mut<EscrowStore>(@fusion_plus);
+        
+        assert!(table::contains(&escrow_store.escrows, escrow_id), E_ESCROW_NOT_FOUND);
+        
+        let escrow = table::borrow_mut(&mut escrow_store.escrows, escrow_id);
+        
+        assert!(!escrow.withdrawn, E_ALREADY_WITHDRAWN);
+        assert!(!escrow.refunded, E_ALREADY_REFUNDED);
+        
+        // Check if secret has been revealed via LayerZero
+        assert!(layerzero_adapter::has_secret_revealed(&escrow_id), E_INVALID_SECRET);
+        
+        // Get the revealed secret and verify it
+        let (secret, _revealer) = layerzero_adapter::get_revealed_secret(&escrow_id);
         let secret_hash = std::hash::sha3_256(secret);
         assert!(secret_hash == escrow.hashlock, E_INVALID_SECRET);
         
