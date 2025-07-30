@@ -507,6 +507,9 @@ export class ResolverServiceV2 {
       
       console.log('   ✅ Successfully withdrew from source escrow!');
       
+      // Update fill status to prevent double withdrawal
+      await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_WITHDRAWN');
+      
       // Emit event for source escrow withdrawal
       this.socket.emit('escrow:source:withdrawn', {
         orderId: fill.orderId,
@@ -565,6 +568,12 @@ export class ResolverServiceV2 {
     console.log(`\n💰 Source escrow created, proceeding with swap completion`);
     
     try {
+      // Check if fill is already completed or being processed
+      if (fill.status === 'COMPLETED' || fill.status === 'SOURCE_WITHDRAWN') {
+        console.log('   ⚠️ Fill already completed or being processed, skipping...');
+        return;
+      }
+      
       // Update fill status
       await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_CREATED', {
         sourceEscrowId
@@ -587,6 +596,9 @@ export class ResolverServiceV2 {
       const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
       
       console.log('   ✅ Successfully withdrew from source escrow!');
+      
+      // Update fill status to prevent double withdrawal
+      await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_WITHDRAWN');
       
       // Emit event for source escrow withdrawal
       this.socket.emit('escrow:source:withdrawn', {

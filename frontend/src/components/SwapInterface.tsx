@@ -42,6 +42,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
+  const [showTokenMenu, setShowTokenMenu] = useState(false);
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
 
   // Get current balances
@@ -67,12 +68,12 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     setIsLoading(true);
     
     try {
-      // Check if we're swapping ETH from Ethereum
-      const isETHSwap = fromChain === Chain.ETHEREUM;
-      const swapAmount = isETHSwap ? ethers.parseEther(fromAmount).toString() : (parseFloat(fromAmount) * 1e8).toString();
+      // Check if we're swapping from Ethereum
+      const isEthereumSwap = fromChain === Chain.ETHEREUM;
+      const swapAmount = isEthereumSwap ? ethers.parseEther(fromAmount).toString() : (parseFloat(fromAmount) * 1e8).toString();
       
-      // Step 1: If swapping ETH, wrap to WETH first
-      if (isETHSwap) {
+      // Step 1: If swapping ETH (not WETH), wrap to WETH first
+      if (isEthereumSwap && selectedToken === 'ETH') {
         const wethService = new WETHService(ethSigner);
         
         // Check user's current WETH balance
@@ -90,8 +91,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         } else {
           console.log('User already has enough WETH, skipping wrap step');
         }
-        
-        // Step 2: Check and handle WETH approval for the Escrow contract
+      }
+      
+      // Step 2: If using WETH, check and handle approval for the Escrow contract
+      if (isEthereumSwap) {
+        const wethService = new WETHService(ethSigner);
         setSwapStatus({ stage: 'approving_weth', message: 'Checking WETH approval...' });
         const escrowAllowance = await wethService.getAllowance(ethAccount, CONTRACTS.ETHEREUM.ESCROW);
         
@@ -240,9 +244,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
 
   const handleMaxClick = () => {
     if (fromChain === Chain.ETHEREUM) {
-      // Leave some ETH for gas
-      const maxEth = Math.max(0, parseFloat(ethBalance) - 0.01);
-      setFromAmount(maxEth.toFixed(6));
+      if (selectedToken === 'ETH') {
+        // Leave some ETH for gas
+        const maxEth = Math.max(0, parseFloat(ethBalance) - 0.01);
+        setFromAmount(maxEth.toFixed(6));
+      } else {
+        // For WETH, can use full balance
+        setFromAmount(wethBalance);
+      }
     } else {
       setFromAmount(aptosBalance);
     }
@@ -356,6 +365,24 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     return () => clearInterval(interval);
   }, [fetchWethBalance]);
 
+  // Auto-select WETH if user has WETH balance but no ETH
+  useEffect(() => {
+    if (fromChain === Chain.ETHEREUM && parseFloat(wethBalance) > 0 && parseFloat(ethBalance) < 0.01) {
+      setSelectedToken('WETH');
+    }
+  }, [fromChain, wethBalance, ethBalance]);
+
+  // Close token menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showTokenMenu && !(e.target as HTMLElement).closest('.token-select')) {
+        setShowTokenMenu(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showTokenMenu]);
+
   const getButtonText = () => {
     if (!ethAccount || !aptosAccount) {
       return 'Connect Wallets';
@@ -363,7 +390,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     if (!fromAmount || parseFloat(fromAmount) === 0) {
       return 'Enter an amount';
     }
-    if (parseFloat(fromAmount) > parseFloat(fromBalance)) {
+    const balance = fromChain === Chain.ETHEREUM && selectedToken === 'WETH' ? wethBalance : fromBalance;
+    if (parseFloat(fromAmount) > parseFloat(balance)) {
       return 'Insufficient balance';
     }
     if (isLoading) {
@@ -373,12 +401,13 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   };
 
   const isButtonDisabled = () => {
+    const balance = fromChain === Chain.ETHEREUM && selectedToken === 'WETH' ? wethBalance : fromBalance;
     return isLoading || 
       !ethAccount || 
       !aptosAccount || 
       !fromAmount || 
       parseFloat(fromAmount) === 0 ||
-      parseFloat(fromAmount) > parseFloat(fromBalance);
+      parseFloat(fromAmount) > parseFloat(balance);
   };
 
   return (
@@ -410,13 +439,42 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             </div>
           </div>
           <div className="token-input-content">
-            <div className="token-select">
+            <div className="token-select" onClick={() => fromChain === Chain.ETHEREUM && setShowTokenMenu(!showTokenMenu)}>
               <div className="token-icon">
                 {fromChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
               </div>
               <span className="token-symbol">
                 {fromChain === Chain.ETHEREUM ? selectedToken : 'APT'}
               </span>
+              {fromChain === Chain.ETHEREUM && (
+                <span className="dropdown-arrow">▼</span>
+              )}
+              {showTokenMenu && fromChain === Chain.ETHEREUM && (
+                <div className="token-menu">
+                  <div 
+                    className={`token-option ${selectedToken === 'ETH' ? 'selected' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedToken('ETH');
+                      setShowTokenMenu(false);
+                    }}
+                  >
+                    <span>ETH</span>
+                    <span className="token-balance-menu">{ethBalance}</span>
+                  </div>
+                  <div 
+                    className={`token-option ${selectedToken === 'WETH' ? 'selected' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedToken('WETH');
+                      setShowTokenMenu(false);
+                    }}
+                  >
+                    <span>WETH</span>
+                    <span className="token-balance-menu">{parseFloat(wethBalance).toFixed(4)}</span>
+                  </div>
+                </div>
+              )}
             </div>
             <input
               type="number"
