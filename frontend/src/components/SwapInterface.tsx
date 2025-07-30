@@ -2,13 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
 import { PriceService } from '../services/PriceService';
-import { BalanceService } from '../services/BalanceService';
+import { PermitService } from '../services/PermitService';
+import { CONTRACTS } from '../config/contracts';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
   aptosAccount: string | null;
   ethSigner: ethers.Signer | null;
   orderService: OrderService;
+  ethBalance: string;
+  aptosBalance: string;
 }
 
 interface SwapStatus {
@@ -22,20 +25,28 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   ethAccount,
   aptosAccount,
   ethSigner,
-  orderService
+  orderService,
+  ethBalance,
+  aptosBalance
 }) => {
   const [fromChain, setFromChain] = useState<Chain>(Chain.ETHEREUM);
   const [toChain, setToChain] = useState<Chain>(Chain.APTOS);
   const [fromAmount, setFromAmount] = useState('');
-  const [minToAmount, setMinToAmount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
-  const [ethBalance, setEthBalance] = useState<string>('0');
-  const [aptBalance, setAptBalance] = useState<string>('0');
   const [priceService] = useState(() => new PriceService());
-  const [balanceService] = useState(() => new BalanceService());
   const [swapStatus, setSwapStatus] = useState<SwapStatus>({ stage: 'idle', message: '' });
   const [estimatedOutput, setEstimatedOutput] = useState<string>('');
+  const [focusedInput, setFocusedInput] = useState<'from' | 'to' | null>(null);
+
+  // Get current balances
+  const currentBalances = {
+    [Chain.ETHEREUM]: ethBalance,
+    [Chain.APTOS]: aptosBalance
+  };
+
+  const fromBalance = currentBalances[fromChain];
+  const toBalance = currentBalances[toChain];
 
   const handleSwap = async () => {
     if (!ethAccount || !aptosAccount || !ethSigner) {
@@ -43,13 +54,13 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       return;
     }
 
-    if (!fromAmount || !minToAmount) {
-      alert('Please enter amounts');
+    if (!fromAmount || !estimatedOutput) {
+      alert('Please enter amount');
       return;
     }
 
     setIsLoading(true);
-    setSwapStatus({ stage: 'submitting', message: 'Creating order...' });
+    setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
     
     try {
       const orderData = {
@@ -65,23 +76,51 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           ? ethers.parseEther(fromAmount).toString()
           : (parseFloat(fromAmount) * 1e8).toString(),
         minToAmount: toChain === Chain.ETHEREUM
-          ? ethers.parseEther(minToAmount).toString()
-          : (parseFloat(minToAmount) * 1e8).toString(),
+          ? ethers.parseEther(estimatedOutput).toString()
+          : (parseFloat(estimatedOutput) * 1e8).toString(),
         maker: fromChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
-        deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+        deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
         nonce: Date.now().toString(),
         partialFillAllowed: false
       };
 
-      // Sign the order
-      const signature = await orderService.signOrder(orderData, ethSigner);
+      let finalOrderData = orderData;
+      let signature;
+
+      // If source chain is Ethereum, create a permit for automatic transfer
+      if (fromChain === Chain.ETHEREUM) {
+        setSwapStatus({ stage: 'submitting', message: 'Signing permit for automatic transfer...' });
+        
+        try {
+          // Create order with permit
+          const orderWithPermit = await PermitService.createOrderWithPermit(
+            orderData,
+            ethSigner,
+            CONTRACTS.ETHEREUM.PERMIT,
+            CONTRACTS.RESOLVER.ETHEREUM
+          );
+          
+          finalOrderData = orderWithPermit;
+          signature = orderWithPermit.signature;
+          
+          console.log('Order with permit created:', orderWithPermit);
+        } catch (error) {
+          console.error('Failed to create permit, falling back to manual escrow:', error);
+          // Fall back to regular order without permit
+          signature = await orderService.signOrder(orderData, ethSigner);
+          finalOrderData = { ...orderData, signature };
+        }
+      } else {
+        // For non-Ethereum source chains, use regular signature
+        signature = await orderService.signOrder(orderData, ethSigner);
+        finalOrderData = { ...orderData, signature };
+      }
+
+      setSwapStatus({ stage: 'submitting', message: 'Submitting order...' });
       
       // Submit the order
-      const result = await orderService.createOrder({
-        ...orderData,
-        signature
-      });
+      const result = await orderService.createOrder(finalOrderData);
 
       const orderId = result?.id || orderData.nonce;
       setSwapStatus({ 
@@ -89,6 +128,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         message: 'Order submitted! Waiting for resolver...', 
         orderId 
       });
+
+      // Notify the transaction panel
+      if ((orderService as any).notifyOrderCreated) {
+        (orderService as any).notifyOrderCreated(orderId, orderData);
+      }
 
       // Subscribe to order updates
       orderService.subscribeToOrderUpdates(orderId, (update: any) => {
@@ -116,24 +160,23 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         }
       });
 
-      // Clean up after 60 seconds
+      // Clean up after 30 minutes
       setTimeout(() => {
         orderService.unsubscribeFromOrderUpdates(orderId);
         socket.off('escrow:destination:created');
         if (swapStatus.stage === 'waiting') {
           setSwapStatus({
             stage: 'idle',
-            message: 'Order timeout. Check order history for status.'
+            message: 'Order expired. Check order history for status.'
           });
         }
-      }, 60000);
+      }, 1800000); // 30 minutes
     } catch (error) {
       console.error('Failed to create order:', error);
       setSwapStatus({ 
         stage: 'error', 
         message: 'Failed to create order: ' + (error as Error).message 
       });
-      alert('Failed to create order: ' + (error as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -142,6 +185,17 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const switchChains = () => {
     setFromChain(toChain);
     setToChain(fromChain);
+    setFromAmount(estimatedOutput);
+  };
+
+  const handleMaxClick = () => {
+    if (fromChain === Chain.ETHEREUM) {
+      // Leave some ETH for gas
+      const maxEth = Math.max(0, parseFloat(ethBalance) - 0.01);
+      setFromAmount(maxEth.toFixed(6));
+    } else {
+      setFromAmount(aptosBalance);
+    }
   };
 
   // Fetch exchange rate
@@ -163,28 +217,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     return () => clearInterval(interval);
   }, [fromChain, toChain, priceService]);
 
-  // Fetch balances
-  useEffect(() => {
-    const fetchBalances = async () => {
-      if (ethAccount && ethSigner) {
-        const provider = ethSigner.provider;
-        if (provider) {
-          const balance = await balanceService.getEthereumBalance(ethAccount, provider);
-          setEthBalance(balance);
-        }
-      }
-
-      if (aptosAccount) {
-        const balance = await balanceService.getAptosBalance(aptosAccount);
-        setAptBalance(balance);
-      }
-    };
-
-    fetchBalances();
-    const interval = setInterval(fetchBalances, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
-  }, [ethAccount, aptosAccount, ethSigner, balanceService]);
-
   // Calculate estimated output when input changes
   useEffect(() => {
     if (fromAmount && exchangeRate) {
@@ -193,111 +225,162 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         const estimated = inputValue * exchangeRate * 0.99; // 1% resolver fee
         // For APT, use 8 decimal precision to match backend
         const precision = toChain === Chain.APTOS ? 8 : 6;
-        const estimatedStr = estimated.toFixed(precision);
-        setEstimatedOutput(estimatedStr);
-        // Set minToAmount slightly lower to account for price fluctuations
-        const minAmount = estimated * 0.9999; // 0.01% buffer
-        setMinToAmount(minAmount.toFixed(precision));
+        setEstimatedOutput(estimated.toFixed(precision));
       } else {
         setEstimatedOutput('');
-        setMinToAmount('');
       }
+    } else {
+      setEstimatedOutput('');
     }
   }, [fromAmount, exchangeRate, toChain]);
 
+  const getButtonText = () => {
+    if (!ethAccount || !aptosAccount) {
+      return 'Connect Wallets';
+    }
+    if (!fromAmount || parseFloat(fromAmount) === 0) {
+      return 'Enter an amount';
+    }
+    if (parseFloat(fromAmount) > parseFloat(fromBalance)) {
+      return 'Insufficient balance';
+    }
+    if (isLoading) {
+      return 'Creating Order...';
+    }
+    return 'Swap';
+  };
+
+  const isButtonDisabled = () => {
+    return isLoading || 
+      !ethAccount || 
+      !aptosAccount || 
+      !fromAmount || 
+      parseFloat(fromAmount) === 0 ||
+      parseFloat(fromAmount) > parseFloat(fromBalance);
+  };
+
   return (
     <div className="swap-interface">
-      <h2>Create Swap Order</h2>
+      <div className="swap-header">
+        <h2>Swap</h2>
+        <button className="settings-button">⚙</button>
+      </div>
       
       <div className="swap-form">
-        <div className="form-group">
-          <label>From Chain</label>
-          <select 
-            value={fromChain} 
-            onChange={(e) => setFromChain(e.target.value as Chain)}
-          >
-            <option value={Chain.ETHEREUM}>Ethereum</option>
-            <option value={Chain.APTOS}>Aptos</option>
-          </select>
-          <div className="balance-info">
-            Balance: {fromChain === Chain.ETHEREUM ? ethBalance : aptBalance} {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+        {/* From Token */}
+        <div className={`token-input-group ${focusedInput === 'from' ? 'focused' : ''}`}>
+          <div className="token-input-header">
+            <span className="token-input-label">From</span>
+            <div className="token-balance">
+              Balance: {fromBalance}
+              {parseFloat(fromBalance) > 0 && (
+                <span className="max-button" onClick={handleMaxClick}>MAX</span>
+              )}
+            </div>
           </div>
-        </div>
-
-        <div className="form-group">
-          <label>Amount</label>
-          <input
-            type="number"
-            placeholder="0.0"
-            value={fromAmount}
-            onChange={(e) => setFromAmount(e.target.value)}
-          />
-        </div>
-
-        <button 
-          type="button" 
-          onClick={switchChains}
-          style={{ alignSelf: 'center', padding: '10px', cursor: 'pointer' }}
-        >
-          ↕️ Switch
-        </button>
-
-        <div className="form-group">
-          <label>To Chain</label>
-          <select 
-            value={toChain} 
-            onChange={(e) => setToChain(e.target.value as Chain)}
-          >
-            <option value={Chain.ETHEREUM}>Ethereum</option>
-            <option value={Chain.APTOS}>Aptos</option>
-          </select>
-          <div className="balance-info">
-            Balance: {toChain === Chain.ETHEREUM ? ethBalance : aptBalance} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+          <div className="token-input-content">
+            <div className="token-select">
+              <div className="token-icon">
+                {fromChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
+              </div>
+              <span className="token-symbol">
+                {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+              </span>
+            </div>
+            <input
+              type="number"
+              className="amount-input"
+              placeholder="0.0"
+              value={fromAmount}
+              onChange={(e) => setFromAmount(e.target.value)}
+              onFocus={() => setFocusedInput('from')}
+              onBlur={() => setFocusedInput(null)}
+            />
           </div>
+          {fromAmount && exchangeRate && (
+            <div className="token-value">
+              ≈ ${(parseFloat(fromAmount) * (fromChain === Chain.ETHEREUM ? 3769.46 : 4.45)).toFixed(2)}
+            </div>
+          )}
         </div>
 
-        <div className="form-group">
-          <label>Minimum Amount to Receive</label>
-          <input
-            type="number"
-            placeholder="0.0"
-            value={minToAmount}
-            onChange={(e) => setMinToAmount(e.target.value)}
-          />
+        {/* Swap Direction Button */}
+        <div className="swap-direction">
+          <button className="swap-direction-button" onClick={switchChains}>
+            ↓
+          </button>
         </div>
 
+        {/* To Token */}
+        <div className={`token-input-group ${focusedInput === 'to' ? 'focused' : ''}`}>
+          <div className="token-input-header">
+            <span className="token-input-label">To</span>
+            <div className="token-balance">
+              Balance: {toBalance}
+            </div>
+          </div>
+          <div className="token-input-content">
+            <div className="token-select">
+              <div className="token-icon">
+                {toChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
+              </div>
+              <span className="token-symbol">
+                {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+              </span>
+            </div>
+            <input
+              type="number"
+              className="amount-input"
+              placeholder="0.0"
+              value={estimatedOutput}
+              readOnly
+              onFocus={() => setFocusedInput('to')}
+              onBlur={() => setFocusedInput(null)}
+            />
+          </div>
+          {estimatedOutput && (
+            <div className="token-value">
+              ≈ ${(parseFloat(estimatedOutput) * (toChain === Chain.ETHEREUM ? 3769.46 : 4.45)).toFixed(2)}
+            </div>
+          )}
+        </div>
+
+        {/* Exchange Rate */}
         {exchangeRate && (
           <div className="exchange-rate">
-            <div>Exchange Rate: 1 {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'} = {exchangeRate.toFixed(4)} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}</div>
-            {estimatedOutput && (
-              <div className="estimated-output">
-                Estimated Output: {estimatedOutput} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'} (after 1% fee)
-              </div>
-            )}
+            <span>Rate</span>
+            <span className="rate-value">
+              1 {fromChain === Chain.ETHEREUM ? 'ETH' : 'APT'} = {exchangeRate.toFixed(4)} {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+            </span>
           </div>
         )}
 
+        {/* Status Message */}
         {swapStatus.stage !== 'idle' && (
-          <div className={`swap-status ${swapStatus.stage}`}>
+          <div className={`swap-status ${swapStatus.stage} fade-in`}>
             <div className="status-message">{swapStatus.message}</div>
             {swapStatus.orderId && (
-              <div className="order-id">Order ID: {swapStatus.orderId}</div>
+              <div className="order-id">Order ID: {swapStatus.orderId.slice(0, 8)}...</div>
             )}
             {swapStatus.escrowHash && (
               <div className="escrow-info">
-                <div>Secret Hash: {swapStatus.escrowHash.slice(0, 10)}...</div>
-                <div className="next-step">Next: Lock your ETH on Ethereum to complete the swap</div>
+                <div className="next-step">
+                  <strong>Next Step:</strong> To complete the swap, you need to create an Ethereum escrow.
+                  <br />
+                  <small>Note: In the full Fusion+ implementation, this would be done automatically via permit/approval.</small>
+                </div>
               </div>
             )}
           </div>
         )}
 
+        {/* Swap Button */}
         <button
           className="swap-button"
           onClick={handleSwap}
-          disabled={isLoading || !ethAccount || !aptosAccount}
+          disabled={isButtonDisabled()}
         >
-          {isLoading ? 'Creating Order...' : 'Create Swap Order'}
+          {getButtonText()}
         </button>
       </div>
     </div>

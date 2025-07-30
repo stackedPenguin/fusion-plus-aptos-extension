@@ -3,9 +3,19 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import { ChainServiceSimple } from './ChainServiceSimple';
 import { PriceService } from './PriceService';
+import { PermitService } from './PermitService';
 import dotenv from 'dotenv';
+import { createHash } from 'crypto';
 
 dotenv.config();
+
+interface Permit {
+  owner: string;
+  spender: string;
+  value: string;
+  nonce: string;
+  deadline: number;
+}
 
 interface Order {
   id: string;
@@ -20,6 +30,9 @@ interface Order {
   deadline: number;
   status: string;
   secretHashes?: string[];
+  // Permit for automatic transfers
+  permit?: Permit;
+  permitSignature?: string;
 }
 
 interface Fill {
@@ -190,6 +203,15 @@ export class ResolverServiceV2 {
   private async createDestinationEscrow(order: Order) {
     console.log(`\n📦 Creating destination escrow for order ${order.id}`);
     
+    // Check if order has a permit for automatic transfer
+    if (order.permit && order.permitSignature) {
+      console.log(`   🎫 Order has permit for automatic transfer`);
+      console.log(`   📝 Permit owner: ${order.permit.owner}`);
+      console.log(`   📝 Permit spender: ${order.permit.spender}`);
+      console.log(`   📝 Permit value: ${order.permit.value}`);
+      // TODO: Execute permit transfer after creating destination escrow
+    }
+    
     // Get exchange rate and calculate actual output amount
     const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : order.fromToken;
     // Handle Aptos token address
@@ -280,7 +302,57 @@ export class ResolverServiceV2 {
       });
       
       console.log(`   ✅ Destination escrow created: ${escrowId}`);
-      console.log(`   ⏳ Waiting for user to create source escrow...`);
+      
+      // If order has a permit, execute automatic transfer
+      if (order.permit && order.permitSignature && order.fromChain === 'ETHEREUM') {
+        console.log(`   🎫 Executing automatic transfer with permit...`);
+        
+        try {
+          const permitService = new PermitService(
+            this.ethereumProvider,
+            process.env.ETHEREUM_PERMIT_CONTRACT!
+          );
+          
+          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
+          
+          // Create source escrow ID
+          const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
+          
+          // Execute permit transfer to our escrow contract
+          const permitTxHash = await permitService.executePermitTransfer(
+            order.permit,
+            order.permitSignature,
+            order.fromToken, // Token address (0x0 for ETH)
+            process.env.ETHEREUM_ESCROW_ADDRESS!, // Transfer to escrow contract
+            wallet
+          );
+          
+          console.log(`   ✅ Permit transfer executed: ${permitTxHash}`);
+          console.log(`   📝 Creating source escrow automatically...`);
+          
+          // Create source escrow with transferred funds
+          const sourceTxHash = await this.chainService.createEthereumEscrow(
+            sourceEscrowId,
+            this.ethereumAddress, // Resolver is beneficiary on source
+            order.fromToken,
+            order.fromAmount,
+            secretHash,
+            timelock,
+            ethers.parseEther('0.001').toString() // Safety deposit
+          );
+          
+          console.log(`   ✅ Source escrow created automatically: ${sourceTxHash}`);
+          
+          // Continue with normal flow - reveal secret and complete swap
+          await this.completeSwap(order, fill, secret, sourceEscrowId, escrowId);
+          
+        } catch (error) {
+          console.error(`   ❌ Failed to execute permit transfer:`, error);
+          console.log(`   ⏳ Falling back to manual escrow creation...`);
+        }
+      } else {
+        console.log(`   ⏳ Waiting for user to create source escrow...`);
+      }
       
     } catch (error) {
       console.error(`Failed to create destination escrow:`, error);
@@ -354,6 +426,77 @@ export class ResolverServiceV2 {
     // TODO: Monitor Aptos escrow events
   }
 
+  private async completeSwap(order: Order, fill: Fill, secret: Uint8Array, sourceEscrowId: string, destEscrowId: string) {
+    console.log(`\n💰 Completing swap automatically...`);
+    
+    try {
+      // Update fill status
+      await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_CREATED', {
+        sourceEscrowId
+      });
+      
+      // Reveal secret and withdraw from source escrow
+      console.log('   🔓 Revealing secret and withdrawing from source escrow...');
+      
+      // Withdraw from source escrow (we are the beneficiary)
+      const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      
+      console.log('   ✅ Successfully withdrew from source escrow!');
+      
+      // Emit event for source escrow withdrawal
+      this.socket.emit('escrow:source:withdrawn', {
+        orderId: fill.orderId,
+        escrowId: sourceEscrowId,
+        secret: ethers.hexlify(secret),
+        txHash: withdrawTx
+      });
+      
+      // Now withdraw from destination escrow to transfer funds to user
+      if (order.toChain === 'APTOS') {
+        console.log('   🔓 Withdrawing from Aptos escrow to transfer funds to user...');
+        
+        try {
+          // Convert escrow ID to bytes
+          const destEscrowIdBytes = ethers.getBytes(destEscrowId);
+          
+          // Withdraw from Aptos escrow - this will automatically transfer to the beneficiary
+          const aptosTxHash = await this.chainService.withdrawAptosEscrow(destEscrowIdBytes, secret);
+          
+          console.log(`   ✅ Aptos withdrawal successful! Funds transferred to user.`);
+          console.log(`   📄 Aptos transaction: ${aptosTxHash}`);
+          
+          // Optionally send cross-chain secret reveal if LayerZero is configured
+          if (this.chainService.sendCrossChainSecretReveal) {
+            console.log('   🌐 Also sending cross-chain secret reveal via LayerZero...');
+            await this.chainService.sendCrossChainSecretReveal(
+              10108, // Aptos testnet endpoint ID
+              sourceEscrowId,
+              secret
+            );
+          }
+        } catch (error) {
+          console.error('   ⚠️ Failed to withdraw from Aptos escrow:', error);
+          // Don't fail the whole operation if Aptos withdrawal fails
+          // The user can still manually withdraw using the revealed secret
+        }
+      }
+      
+      console.log('   🎉 Swap completed automatically! User received funds without manual claiming.');
+      
+      // Update final status
+      await this.updateFillStatus(fill.orderId, fill.id, 'COMPLETED');
+      
+      // Clean up
+      this.monitoringFills.delete(destEscrowId);
+      this.fillSecrets.delete(fill.id);
+      
+    } catch (error) {
+      console.error('Failed to complete automatic swap:', error);
+      await this.updateFillStatus(fill.orderId, fill.id, 'FAILED');
+      throw error;
+    }
+  }
+
   private async handleSourceEscrowCreated(fill: Fill, sourceEscrowId: string) {
     console.log(`\n💰 Source escrow created, proceeding with swap completion`);
     
@@ -377,22 +520,50 @@ export class ResolverServiceV2 {
       }
       
       // Withdraw from source escrow (we are the beneficiary)
-      await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
       
       console.log('   ✅ Successfully withdrew from source escrow!');
       
-      // Send cross-chain secret reveal if LayerZero is configured
+      // Emit event for source escrow withdrawal
+      this.socket.emit('escrow:source:withdrawn', {
+        orderId: fill.orderId,
+        escrowId: sourceEscrowId,
+        secret: ethers.hexlify(secret),
+        txHash: withdrawTx
+      });
+      
+      // Now withdraw from destination escrow to transfer funds to user
       const order = this.activeOrders.get(fill.orderId);
-      if (order && order.toChain === 'APTOS') {
-        console.log('   🌐 Sending cross-chain secret reveal to Aptos...');
-        await this.chainService.sendCrossChainSecretReveal(
-          10108, // Aptos testnet endpoint ID
-          sourceEscrowId,
-          secret
-        );
+      if (order && order.toChain === 'APTOS' && fill.destinationEscrowId) {
+        console.log('   🔓 Withdrawing from Aptos escrow to transfer funds to user...');
+        
+        try {
+          // Convert escrow ID to bytes
+          const destEscrowIdBytes = ethers.getBytes(fill.destinationEscrowId);
+          
+          // Withdraw from Aptos escrow - this will automatically transfer to the beneficiary
+          const aptosTxHash = await this.chainService.withdrawAptosEscrow(destEscrowIdBytes, secret);
+          
+          console.log(`   ✅ Aptos withdrawal successful! Funds transferred to user.`);
+          console.log(`   📄 Aptos transaction: ${aptosTxHash}`);
+          
+          // Optionally send cross-chain secret reveal if LayerZero is configured
+          if (this.chainService.sendCrossChainSecretReveal) {
+            console.log('   🌐 Also sending cross-chain secret reveal via LayerZero...');
+            await this.chainService.sendCrossChainSecretReveal(
+              10108, // Aptos testnet endpoint ID
+              sourceEscrowId,
+              secret
+            );
+          }
+        } catch (error) {
+          console.error('   ⚠️ Failed to withdraw from Aptos escrow:', error);
+          // Don't fail the whole operation if Aptos withdrawal fails
+          // The user can still manually withdraw using the revealed secret
+        }
       }
       
-      console.log('   🎉 User can now use the revealed secret to withdraw from destination escrow');
+      console.log('   🎉 Swap completed! Funds have been transferred to the user.');
       
       // Update final status
       await this.updateFillStatus(fill.orderId, fill.id, 'COMPLETED');

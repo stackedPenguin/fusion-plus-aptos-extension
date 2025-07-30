@@ -4,6 +4,7 @@ module fusion_plus::escrow {
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_std::table::{Self, Table};
+    use aptos_std::aptos_hash;
     use escrow_addr::layerzero_adapter;
 
     /// Error codes
@@ -101,8 +102,8 @@ module fusion_plus::escrow {
         assert!(!escrow.withdrawn, E_ALREADY_WITHDRAWN);
         assert!(!escrow.refunded, E_ALREADY_REFUNDED);
         
-        // Verify the secret
-        let secret_hash = std::hash::sha3_256(secret);
+        // Verify the secret using Keccak256 (for Ethereum compatibility)
+        let secret_hash = aptos_hash::keccak256(secret);
         assert!(secret_hash == escrow.hashlock, E_INVALID_SECRET);
         
         escrow.withdrawn = true;
@@ -135,9 +136,9 @@ module fusion_plus::escrow {
         // Check if secret has been revealed via LayerZero
         assert!(layerzero_adapter::has_secret_revealed(&escrow_id), E_INVALID_SECRET);
         
-        // Get the revealed secret and verify it
+        // Get the revealed secret and verify it using Keccak256
         let (secret, _revealer) = layerzero_adapter::get_revealed_secret(&escrow_id);
-        let secret_hash = std::hash::sha3_256(secret);
+        let secret_hash = aptos_hash::keccak256(secret);
         assert!(secret_hash == escrow.hashlock, E_INVALID_SECRET);
         
         escrow.withdrawn = true;

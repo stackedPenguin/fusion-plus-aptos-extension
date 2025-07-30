@@ -85,6 +85,14 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
       }
     });
 
+    socket.on('escrow:source:withdrawn', (data: any) => {
+      console.log('Relaying escrow:source:withdrawn event:', data);
+      io.emit('escrow:source:withdrawn', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:sourceWithdrawn', data);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('Client disconnected:', socket.id);
     });

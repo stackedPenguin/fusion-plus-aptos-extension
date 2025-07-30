@@ -13,6 +13,15 @@ export enum Chain {
   APTOS = 'APTOS'
 }
 
+// Permit schema for EIP-712 automatic transfers
+export const PermitSchema = z.object({
+  owner: z.string(),
+  spender: z.string(),
+  value: z.string(),
+  nonce: z.string(),
+  deadline: z.number()
+});
+
 export const CreateOrderSchema = z.object({
   fromChain: z.nativeEnum(Chain),
   toChain: z.nativeEnum(Chain),
@@ -26,7 +35,10 @@ export const CreateOrderSchema = z.object({
   deadline: z.number(),
   nonce: z.string(),
   partialFillAllowed: z.boolean().default(false),
-  secretHashes: z.array(z.string()).optional() // For partial fills using Merkle tree
+  secretHashes: z.array(z.string()).optional(), // For partial fills using Merkle tree
+  // Optional permit for automatic transfers
+  permit: PermitSchema.optional(),
+  permitSignature: z.string().optional()
 });
 
 export type CreateOrderDto = z.infer<typeof CreateOrderSchema>;

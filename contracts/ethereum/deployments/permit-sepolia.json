@@ -1,0 +1,6 @@
+{
+  "network": "sepolia",
+  "permitContract": "0x1eB5f27B160Aa22D024164c80F00bD5F73dDBb1E",
+  "domainSeparator": "0x9875787b75221e55df689e9629632ce9c017f17b0b65ae881a3e9f4b4f0cc778",
+  "deployedAt": "2025-07-30T15:26:03.864Z"
+}
