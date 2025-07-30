@@ -198,9 +198,76 @@ main {
 
 .exchange-rate {
   background-color: #f0f0f0;
-  padding: 10px;
-  border-radius: 4px;
+  padding: 15px;
+  border-radius: 6px;
   text-align: center;
-  margin: 10px 0;
+  margin: 15px 0;
   font-size: 14px;
+}
+
+.estimated-output {
+  margin-top: 8px;
+  color: #4CAF50;
+  font-weight: 600;
+}
+
+.swap-status {
+  margin-top: 20px;
+  padding: 20px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.swap-status.submitting {
+  background-color: #e3f2fd;
+  border: 1px solid #64b5f6;
+}
+
+.swap-status.waiting {
+  background-color: #fff3cd;
+  border: 1px solid #ffc107;
+}
+
+.swap-status.escrow_created {
+  background-color: #d4edda;
+  border: 1px solid #28a745;
+}
+
+.swap-status.error {
+  background-color: #f8d7da;
+  border: 1px solid #dc3545;
+}
+
+.status-message {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.order-id {
+  font-size: 12px;
+  color: #666;
+  font-family: monospace;
+}
+
+.escrow-info {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(0,0,0,0.1);
+}
+
+.escrow-info div {
+  margin: 5px 0;
+  font-size: 14px;
+}
+
+.next-step {
+  color: #0066cc;
+  font-weight: 600;
+  margin-top: 10px !important;
 }
