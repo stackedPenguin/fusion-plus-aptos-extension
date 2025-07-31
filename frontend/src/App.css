@@ -199,12 +199,21 @@ body {
 
 .wallet-card button {
   background: none;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--accent-primary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  padding: 0;
+  padding: 4px 12px;
+  border-radius: 6px;
+  margin-top: 4px;
+  align-self: flex-start;
+  transition: all 0.2s ease;
+}
+
+.wallet-card button:hover {
+  border-color: var(--accent-primary);
+  background: rgba(29, 200, 114, 0.1);
 }
 
 .disconnect-btn {
@@ -1086,6 +1095,25 @@ body {
 }
 
 .new-swap-button:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.create-escrow-button {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: all 0.3s ease;
+  width: 100%;
+}
+
+.create-escrow-button:hover {
   background: var(--accent-hover);
   transform: translateY(-1px);
 }

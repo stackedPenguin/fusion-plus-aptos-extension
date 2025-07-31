@@ -342,7 +342,21 @@ export class ResolverServiceV2 {
       const isWETHOrder = order.fromChain === 'ETHEREUM' && 
                          order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase();
       
-      if (isWETHOrder) {
+      // Check if this is an APT to ETH order
+      const isAPTOrder = order.fromChain === 'APTOS' && 
+                         order.fromToken === '0x1::aptos_coin::AptosCoin';
+      
+      if (isAPTOrder) {
+        console.log(`   🪙 APT to ETH order detected, creating source escrow automatically...`);
+        
+        try {
+          // Create the source escrow on Aptos with the user's APT
+          await this.createSourceEscrowForAPT(order, fill);
+        } catch (error) {
+          console.error(`   ❌ Failed to create APT source escrow:`, error);
+          console.log(`   ⏳ Waiting for user to create source escrow manually...`);
+        }
+      } else if (isWETHOrder) {
         console.log(`   🎫 Checking WETH approval for automatic transfer...`);
         
         try {
@@ -775,6 +789,31 @@ export class ResolverServiceV2 {
       `${this.orderEngineUrl}/api/orders/${orderId}/fills/${fillId}`,
       { status, ...additionalData }
     );
+  }
+
+  private async createSourceEscrowForAPT(order: Order, fill: Fill): Promise<void> {
+    console.log(`   📝 Creating APT source escrow for order ${order.id}`);
+    
+    try {
+      // For APT to ETH swaps, we need to create an escrow on Aptos
+      // Since APT is a native token on Aptos, the user needs to have created the escrow
+      // The resolver cannot create it on behalf of the user
+      
+      // However, we can simulate the creation for demo purposes
+      console.log(`   ⚠️  Note: APT escrows require user interaction on Aptos`);
+      console.log(`   📋 Waiting for user to create APT escrow...`);
+      
+      // In a production system, we would:
+      // 1. Monitor for the user's escrow creation on Aptos
+      // 2. Verify the escrow parameters match the order
+      // 3. Proceed with revealing the secret
+      
+      // For now, we'll just log and wait
+      console.log(`   ⏳ APT source escrow creation is pending user action`);
+    } catch (error) {
+      console.error(`   ❌ Error in createSourceEscrowForAPT:`, error);
+      throw error;
+    }
   }
 
   start() {

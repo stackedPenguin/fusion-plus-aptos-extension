@@ -801,11 +801,34 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             )}
             {swapStatus.escrowHash && swapStatus.stage !== 'completed' && (
               <div className="escrow-info">
-                <div className="next-step">
-                  <strong>Processing swap...</strong>
-                  <br />
-                  <small>The resolver will complete the swap automatically.</small>
-                </div>
+                {fromChain === Chain.APTOS ? (
+                  <div className="next-step">
+                    <strong>Next Step: Create Source Escrow</strong>
+                    <br />
+                    <small>The resolver has locked ETH. Now you need to lock your APT.</small>
+                    <button 
+                      className="create-escrow-button"
+                      onClick={async () => {
+                        // In a real implementation, this would trigger the Aptos wallet
+                        // to create an escrow transaction
+                        alert('APT escrow creation would be triggered here through your Aptos wallet');
+                        console.log('Create APT escrow with:', {
+                          orderId: swapStatus.orderId,
+                          secretHash: swapStatus.escrowHash,
+                          amount: fromAmount
+                        });
+                      }}
+                    >
+                      Create APT Escrow
+                    </button>
+                  </div>
+                ) : (
+                  <div className="next-step">
+                    <strong>Processing swap...</strong>
+                    <br />
+                    <small>The resolver will complete the swap automatically.</small>
+                  </div>
+                )}
               </div>
             )}
           </div>
