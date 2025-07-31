@@ -3,9 +3,8 @@ import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
 import { PriceService } from '../services/PriceService';
 import { WETHService } from '../services/WETHService';
-import { ERC20Service } from '../services/ERC20Service';
 import { AssetFlowLogger } from '../services/AssetFlowLogger';
-import { CONTRACTS, TOKEN_INFO } from '../config/contracts';
+import { CONTRACTS } from '../config/contracts';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -19,7 +18,6 @@ interface SwapInterfaceProps {
 const TOKEN_ICONS = {
   ETH: 'https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png',
   WETH: 'https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png',
-  USDC: 'https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png',
   APT: 'https://s2.coinmarketcap.com/static/img/coins/64x64/21794.png'
 };
 
@@ -50,10 +48,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [ethPrice, setEthPrice] = useState<number>(0);
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
-  const [usdcBalance, setUsdcBalance] = useState<string>('0');
-  const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH' | 'USDC'>('ETH');
+  const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
-  const [usdcPrice, setUsdcPrice] = useState<number>(1); // USDC is always ~$1
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
   const [showResolverStatus, setShowResolverStatus] = useState(false);
   const [resolverBalances, setResolverBalances] = useState<any>(null);
@@ -89,11 +85,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       return;
     }
     
-    // If USDC is selected but user has no balance, show swap interface
-    if (fromChain === Chain.ETHEREUM && selectedToken === 'USDC' && parseFloat(usdcBalance) === 0) {
-      alert('You need USDC to swap. You can buy USDC on Uniswap or other DEXs.');
-      return;
-    }
 
     setIsLoading(true);
     
@@ -111,13 +102,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       // Handle different decimals for different tokens
       let swapAmount: string;
       if (isEthereumSwap) {
-        if (selectedToken === 'USDC') {
-          // USDC has 6 decimals
-          swapAmount = ethers.parseUnits(fromAmount, 6).toString();
-        } else {
-          // ETH/WETH have 18 decimals
-          swapAmount = ethers.parseEther(fromAmount).toString();
-        }
+        // ETH/WETH have 18 decimals
+        swapAmount = ethers.parseEther(fromAmount).toString();
       } else {
         swapAmount = (parseFloat(fromAmount) * 1e8).toString();
       }
@@ -148,29 +134,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           } else {
             await logger.logSwapStep('✅ WETH already approved for escrow contract');
           }
-        } else if (selectedToken === 'USDC') {
-          const usdcService = new ERC20Service(ethSigner, CONTRACTS.ETHEREUM.USDC, 'USDC');
-          setSwapStatus({ stage: 'approving_token', message: 'Checking USDC approval...' });
-          await logger.logSwapStep('✅ Checking USDC approval for escrow contract');
-          const escrowAllowance = await usdcService.getAllowance(ethAccount, CONTRACTS.ETHEREUM.ESCROW);
-          
-          if (escrowAllowance < BigInt(swapAmount)) {
-            setSwapStatus({ stage: 'approving_token', message: 'Approving USDC for escrow contract...' });
-            await logger.logSwapStep('📝 Approving USDC for escrow contract', `Amount: ${ethers.formatUnits(swapAmount, 6)} USDC`);
-            try {
-              const approveTx = await usdcService.approve(
-                CONTRACTS.ETHEREUM.ESCROW, // Approve escrow contract, not resolver
-                ethers.MaxUint256.toString() // Infinite approval
-              );
-              console.log('USDC approved for escrow contract:', approveTx);
-              await logger.logSwapStep('✅ USDC approval confirmed', `TxHash: ${approveTx}`);
-            } catch (error) {
-              throw new Error(`Failed to approve USDC: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-          } else {
-            await logger.logSwapStep('✅ USDC already approved for escrow contract');
-          }
-        }
       }
       
       setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
@@ -180,7 +143,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         fromChain,
         toChain,
         fromToken: fromChain === Chain.ETHEREUM 
-          ? (selectedToken === 'USDC' ? CONTRACTS.ETHEREUM.USDC : CONTRACTS.ETHEREUM.WETH)
+          ? CONTRACTS.ETHEREUM.WETH
           : '0x1::aptos_coin::AptosCoin', // APT
         toToken: toChain === Chain.ETHEREUM 
           ? ethers.ZeroAddress // ETH
@@ -451,7 +414,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   useEffect(() => {
     const fetchRates = async () => {
       let fromToken = fromChain === Chain.ETHEREUM 
-        ? (selectedToken === 'USDC' ? 'USDC' : 'ETH') 
+        ? 'ETH' 
         : 'APT';
       const toToken = toChain === Chain.ETHEREUM ? 'ETH' : 'APT';
       
@@ -512,20 +475,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     }
   }, [ethAccount, ethSigner]);
 
-  // Function to fetch USDC balance
-  const fetchUsdcBalance = useCallback(async () => {
-    if (ethAccount && ethSigner) {
-      try {
-        const usdcService = new ERC20Service(ethSigner, CONTRACTS.ETHEREUM.USDC, 'USDC');
-        const balance = await usdcService.getFormattedBalance(ethAccount);
-        setUsdcBalance(balance);
-        console.log(`USDC Balance fetched: ${balance}`);
-      } catch (error) {
-        console.error('Failed to fetch USDC balance:', error);
-        setUsdcBalance('0');
-      }
-    }
-  }, [ethAccount, ethSigner]);
 
   // Fetch WETH balance
   useEffect(() => {
@@ -534,12 +483,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     return () => clearInterval(interval);
   }, [fetchWethBalance]);
 
-  // Fetch USDC balance
-  useEffect(() => {
-    fetchUsdcBalance();
-    const interval = setInterval(fetchUsdcBalance, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
-  }, [fetchUsdcBalance]);
 
   // Auto-select WETH if user has WETH balance but no ETH
   useEffect(() => {
@@ -638,9 +581,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                   {parseFloat(wethBalance) > 0 && (
                     <span style={{ marginLeft: '10px' }}>WETH: {parseFloat(wethBalance).toFixed(4)}</span>
                   )}
-                  {parseFloat(usdcBalance) > 0 && (
-                    <span style={{ marginLeft: '10px' }}>USDC: {parseFloat(usdcBalance).toFixed(2)}</span>
-                  )}
                 </>
               ) : (
                 <span>Balance: {fromBalance}</span>
@@ -695,19 +635,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                       <span>WETH</span>
                     </div>
                   </div>
-                  <div 
-                    className={`token-option ${selectedToken === 'USDC' ? 'selected' : ''}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedToken('USDC');
-                      setShowTokenDropdown(false);
-                    }}
-                  >
-                    <div className="token-option-info">
-                      <img className="token-icon-small" src={TOKEN_ICONS.USDC} alt="USDC" />
-                      <span>USDC</span>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
@@ -726,7 +653,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               ≈ ${(() => {
                 const amount = parseFloat(fromAmount);
                 if (fromChain === Chain.ETHEREUM) {
-                  if (selectedToken === 'USDC') return amount.toFixed(2);
                   return (amount * ethPrice).toFixed(2);
                 }
                 return (amount * aptPrice).toFixed(2);

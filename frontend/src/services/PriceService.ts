@@ -18,16 +18,6 @@ export class PriceService {
   async getExchangeRate(fromToken: string, toToken: string): Promise<number> {
     const pair = `${fromToken.toUpperCase()}/${toToken.toUpperCase()}`;
     
-    // Handle USDC special case (always $1)
-    if (fromToken.toUpperCase() === 'USDC') {
-      if (toToken.toUpperCase() === 'APT') {
-        const aptPrice = await this.getUSDPrice('APT');
-        return 1 / aptPrice; // $1 USD to APT
-      } else if (toToken.toUpperCase() === 'ETH') {
-        const ethPrice = await this.getUSDPrice('ETH');
-        return 1 / ethPrice; // $1 USD to ETH
-      }
-    }
     
     // Check cache
     const cached = this.cache.get(pair);
@@ -85,10 +75,6 @@ export class PriceService {
   }
 
   async getUSDPrice(token: string): Promise<number> {
-    // USDC is always $1
-    if (token.toUpperCase() === 'USDC') {
-      return 1;
-    }
 
     const tokenIds: Record<string, string> = {
       'ETH': 'ethereum',

@@ -1,12 +1,10 @@
 import { ethers } from 'ethers';
 import { WETHService } from './WETHService';
-import { ERC20Service } from './ERC20Service';
 import { CONTRACTS } from '../config/contracts';
 
 interface WalletBalances {
   eth: string;
   weth: string;
-  usdc: string;
   apt: string;
 }
 
@@ -14,7 +12,6 @@ interface ResolverBalances {
   ethereum: {
     eth: string;
     weth: string;
-    usdc: string;
   };
   aptos: {
     apt: string;
@@ -33,7 +30,7 @@ export class AssetFlowLogger {
   }
 
   private async getUserBalances(): Promise<WalletBalances> {
-    const balances: WalletBalances = { eth: '0', weth: '0', usdc: '0', apt: '0' };
+    const balances: WalletBalances = { eth: '0', weth: '0', apt: '0' };
     
     try {
       if (this.ethSigner && this.userEthAddress) {
@@ -48,10 +45,6 @@ export class AssetFlowLogger {
         const wethBalance = await wethService.getBalance(this.userEthAddress);
         balances.weth = ethers.formatEther(wethBalance);
         
-        // Get USDC balance
-        const usdcService = new ERC20Service(this.ethSigner, CONTRACTS.ETHEREUM.USDC, 'USDC');
-        const usdcBalance = await usdcService.getFormattedBalance(this.userEthAddress);
-        balances.usdc = usdcBalance;
       }
       
       if (this.userAptosAddress) {
@@ -81,7 +74,7 @@ export class AssetFlowLogger {
 
   private async getResolverBalances(): Promise<ResolverBalances> {
     const balances: ResolverBalances = {
-      ethereum: { eth: '0', weth: '0', usdc: '0' },
+      ethereum: { eth: '0', weth: '0' },
       aptos: { apt: '0' }
     };
     
@@ -101,10 +94,6 @@ export class AssetFlowLogger {
         const wethBalance = await wethService.getBalance(resolverAddress);
         balances.ethereum.weth = ethers.formatEther(wethBalance);
         
-        // USDC balance
-        const usdcService = new ERC20Service(this.ethSigner, CONTRACTS.ETHEREUM.USDC, 'USDC');
-        const usdcBalance = await usdcService.getFormattedBalance(resolverAddress);
-        balances.ethereum.usdc = usdcBalance;
       }
       
       // Get Aptos resolver balance
