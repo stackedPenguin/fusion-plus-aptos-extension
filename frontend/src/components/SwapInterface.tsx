@@ -134,6 +134,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           } else {
             await logger.logSwapStep('✅ WETH already approved for escrow contract');
           }
+        }
       }
       
       setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
