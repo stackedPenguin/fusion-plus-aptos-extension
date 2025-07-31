@@ -15,6 +15,12 @@ interface SwapInterfaceProps {
   aptosBalance: string;
 }
 
+const TOKEN_ICONS = {
+  ETH: 'https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png',
+  WETH: 'https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png',
+  APT: 'https://s2.coinmarketcap.com/static/img/coins/64x64/21794.png'
+};
+
 interface SwapStatus {
   stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error';
   message: string;
@@ -47,6 +53,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
   const [showResolverStatus, setShowResolverStatus] = useState(false);
   const [resolverBalances, setResolverBalances] = useState<any>(null);
+  const [allowPartialFill, setAllowPartialFill] = useState(false);
 
   // Get current balances
   const currentBalances = {
@@ -149,7 +156,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
         nonce: Date.now().toString(),
-        partialFillAllowed: false
+        partialFillAllowed: allowPartialFill
       };
 
       let finalOrderData: any;
@@ -208,10 +215,20 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       const socket = (orderService as any).socket;
       socket.on('escrow:destination:created', async (data: any) => {
         if (data.orderId === orderId) {
-          await logger.logSwapStep('🔒 Destination escrow created on Aptos', `Resolver locked ${(parseInt(data.amount || '0') / 100000000).toFixed(4)} APT`);
+          const amount = (parseInt(data.amount || '0') / 100000000).toFixed(4);
+          let message = `Resolver locked ${amount} APT on Aptos!`;
+          
+          if (data.isPartialFill) {
+            const fillPercent = ((data.fillRatio || 0) * 100).toFixed(1);
+            message = `🧩 PARTIAL FILL: Resolver locked ${amount} APT (${fillPercent}% of order)`;
+            await logger.logSwapStep('🧩 Partial fill on destination', `Resolver filled ${fillPercent}% of your order with ${amount} APT`);
+          } else {
+            await logger.logSwapStep('🔒 Destination escrow created on Aptos', `Resolver locked ${amount} APT`);
+          }
+          
           setSwapStatus({
             stage: 'escrow_created',
-            message: `Resolver locked ${(parseInt(data.amount || '0') / 100000000).toFixed(4)} APT on Aptos!`,
+            message,
             orderId,
             escrowHash: data.secretHash
           });
@@ -234,12 +251,22 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
 
       socket.on('swap:completed', async (data: any) => {
         if (data.orderId === orderId) {
-          await logger.logSwapStep('🎉 Swap completed successfully!', `User received ${(parseFloat(data.toAmount || '0') / 100000000).toFixed(4)} APT`);
+          const receivedAmount = (parseFloat(data.toAmount || '0') / 100000000).toFixed(4);
+          const isPartialFill = parseFloat(receivedAmount) < parseFloat(estimatedOutput) * 0.95; // Consider partial if < 95% of expected
+          
+          if (isPartialFill) {
+            await logger.logSwapStep('🧩 Partial swap completed!', `User received ${receivedAmount} APT (partial fill)`);
+          } else {
+            await logger.logSwapStep('🎉 Swap completed successfully!', `User received ${receivedAmount} APT`);
+          }
+          
           await logger.logPostSwapState(orderId);
           
           setSwapStatus({
             stage: 'completed',
-            message: `Swap completed successfully! You received ${(parseFloat(data.toAmount || '0') / 100000000).toFixed(4)} APT`,
+            message: isPartialFill 
+              ? `🧩 Partial swap completed! You received ${receivedAmount} APT`
+              : `Swap completed successfully! You received ${receivedAmount} APT`,
             orderId
           });
           
@@ -429,13 +456,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       if (showTokenMenu && !(e.target as HTMLElement).closest('.token-select')) {
         setShowTokenMenu(false);
       }
-      if (showResolverStatus && !(e.target as HTMLElement).closest('.resolver-status-section')) {
-        setShowResolverStatus(false);
-      }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showTokenMenu, showResolverStatus]);
+  }, [showTokenMenu]);
 
   // Function to fetch resolver status
   const fetchResolverStatus = async () => {
@@ -487,6 +511,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   };
 
   return (
+    <>
     <div className="swap-interface">
       <div className="swap-header">
         <h2>Swap</h2>
@@ -498,7 +523,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           >
             🏛️ Resolver Status
           </button>
-          <button className="settings-button">⚙</button>
         </div>
       </div>
       
@@ -525,9 +549,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
           <div className="token-input-content">
             <div className="token-select" onClick={() => fromChain === Chain.ETHEREUM && setShowTokenMenu(!showTokenMenu)}>
-              <div className="token-icon">
-                {fromChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
-              </div>
+              <img 
+                className="token-icon" 
+                src={fromChain === Chain.ETHEREUM 
+                  ? (selectedToken === 'ETH' ? TOKEN_ICONS.ETH : TOKEN_ICONS.WETH)
+                  : TOKEN_ICONS.APT
+                }
+                alt={fromChain === Chain.ETHEREUM ? selectedToken : 'APT'}
+              />
               <span className="token-symbol">
                 {fromChain === Chain.ETHEREUM ? selectedToken : 'APT'}
               </span>
@@ -544,8 +573,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                       setShowTokenMenu(false);
                     }}
                   >
-                    <span>ETH</span>
-                    <span className="token-balance-menu">{ethBalance}</span>
+                    <div className="token-option-info">
+                      <img className="token-icon-small" src={TOKEN_ICONS.ETH} alt="ETH" />
+                      <span>ETH</span>
+                    </div>
                   </div>
                   <div 
                     className={`token-option ${selectedToken === 'WETH' ? 'selected' : ''}`}
@@ -555,8 +586,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                       setShowTokenMenu(false);
                     }}
                   >
-                    <span>WETH</span>
-                    <span className="token-balance-menu">{parseFloat(wethBalance).toFixed(4)}</span>
+                    <div className="token-option-info">
+                      <img className="token-icon-small" src={TOKEN_ICONS.WETH} alt="WETH" />
+                      <span>WETH</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -595,9 +628,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
           <div className="token-input-content">
             <div className="token-select">
-              <div className="token-icon">
-                {toChain === Chain.ETHEREUM ? 'Ξ' : 'A'}
-              </div>
+              <img 
+                className="token-icon" 
+                src={toChain === Chain.ETHEREUM ? TOKEN_ICONS.ETH : TOKEN_ICONS.APT}
+                alt={toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+              />
               <span className="token-symbol">
                 {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
               </span>
@@ -629,6 +664,23 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
         )}
 
+        {/* Partial Fill Toggle */}
+        <div className="partial-fill-toggle">
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={allowPartialFill}
+              onChange={(e) => setAllowPartialFill(e.target.checked)}
+              className="toggle-checkbox"
+            />
+            <span className="toggle-switch"></span>
+            <span className="toggle-text">Allow partial fills</span>
+          </label>
+          <div className="toggle-info">
+            <span className="info-text">When enabled, resolvers can fill your order partially</span>
+          </div>
+        </div>
+
         {/* Wrap Confirmation Dialog */}
         {wrapConfirmationData.isVisible && (
           <div className="wrap-confirmation-dialog">
@@ -657,45 +709,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           </div>
         )}
 
-        {/* Resolver Status Display */}
-        {showResolverStatus && resolverBalances && (
-          <div className="resolver-status-section">
-            <div className="resolver-status-header">
-              <h3>🏛️ Resolver Wallet Status</h3>
-              <button 
-                className="close-button"
-                onClick={() => setShowResolverStatus(false)}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="resolver-status-content">
-              <div className="resolver-wallet">
-                <h4>Ethereum Resolver</h4>
-                <p className="wallet-address">{CONTRACTS.RESOLVER.ETHEREUM}</p>
-                <div className="balance-row">
-                  <span>ETH:</span>
-                  <span className="balance-value">{resolverBalances.ethereum.eth}</span>
-                </div>
-                <div className="balance-row">
-                  <span>WETH:</span>
-                  <span className="balance-value">{resolverBalances.ethereum.weth}</span>
-                </div>
-              </div>
-              <div className="resolver-wallet">
-                <h4>Aptos Resolver</h4>
-                <p className="wallet-address">{CONTRACTS.RESOLVER.APTOS}</p>
-                <div className="balance-row">
-                  <span>APT:</span>
-                  <span className="balance-value">{resolverBalances.aptos.apt}</span>
-                </div>
-              </div>
-            </div>
-            <div className="resolver-status-note">
-              <p>💡 <strong>Demo Note:</strong> These are the resolver's liquidity pools. During swaps, the resolver temporarily locks destination tokens and earns source tokens as fees.</p>
-            </div>
-          </div>
-        )}
 
         {/* Status Message */}
         {swapStatus.stage !== 'idle' && (
@@ -711,7 +724,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               {swapStatus.message}
             </div>
             {swapStatus.orderId && (
-              <div className="order-id">Order ID: {swapStatus.orderId.slice(0, 8)}...</div>
+              <div className="order-id">
+                Order ID: {swapStatus.orderId.slice(0, 8)}...
+                {allowPartialFill && <span className="partial-fill-indicator"> • 🧩 Partial fills enabled</span>}
+              </div>
             )}
             {swapStatus.stage === 'completed' && (
               <div className="completion-details">
@@ -758,6 +774,59 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         </button>
       </div>
     </div>
+
+    {/* Resolver Status Modal - Outside swap-interface */}
+    {showResolverStatus && (
+      <div className="modal-overlay" onClick={() => setShowResolverStatus(false)}>
+        <div className="modal-content resolver-status-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3>🏛️ Resolver Wallet Status</h3>
+            <button 
+              className="modal-close-button"
+              onClick={() => setShowResolverStatus(false)}
+            >
+              ✕
+            </button>
+          </div>
+          {resolverBalances ? (
+            <>
+              <div className="modal-body">
+                <div className="resolver-wallet">
+                  <h4>Ethereum Resolver</h4>
+                  <p className="wallet-address">{CONTRACTS.RESOLVER.ETHEREUM}</p>
+                  <div className="balance-row">
+                    <span>ETH:</span>
+                    <span className="balance-value">{resolverBalances.ethereum.eth}</span>
+                  </div>
+                  <div className="balance-row">
+                    <span>WETH:</span>
+                    <span className="balance-value">{resolverBalances.ethereum.weth}</span>
+                  </div>
+                </div>
+                <div className="resolver-wallet">
+                  <h4>Aptos Resolver</h4>
+                  <p className="wallet-address">{CONTRACTS.RESOLVER.APTOS}</p>
+                  <div className="balance-row">
+                    <span>APT:</span>
+                    <span className="balance-value">{resolverBalances.aptos.apt}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <p className="resolver-status-note">
+                  💡 <strong>Demo Note:</strong> These are the resolver's liquidity pools. During swaps, the resolver temporarily locks destination tokens and earns source tokens as fees.
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="modal-body">
+              <div className="loading-spinner">Loading...</div>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+  </>
   );
 };
 

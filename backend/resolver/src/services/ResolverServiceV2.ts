@@ -31,6 +31,7 @@ interface Order {
   deadline: number;
   status: string;
   secretHashes?: string[];
+  partialFillAllowed?: boolean;
   // Permit for automatic transfers
   permit?: Permit;
   permitSignature?: string;
@@ -207,6 +208,11 @@ export class ResolverServiceV2 {
   private async createDestinationEscrow(order: Order) {
     console.log(`\n📦 Creating destination escrow for order ${order.id}`);
     
+    // Check if order allows partial fills
+    if (order.partialFillAllowed) {
+      console.log(`   📊 Order allows partial fills`);
+    }
+    
     // Check if order has a permit for automatic transfer
     if (order.permit && order.permitSignature) {
       console.log(`   🎫 Order has permit for automatic transfer`);
@@ -239,6 +245,24 @@ export class ResolverServiceV2 {
     console.log(`   💱 Using exchange rate: 1 ${fromToken} = ${exchangeRate.toFixed(4)} ${toToken}`);
     console.log(`   📊 Output amount: ${outputAmount} ${toToken}`);
     
+    // Simulate partial fill for demonstration if enabled
+    let fillAmount = actualOutputAmount;
+    let fillRatio = 1.0;
+    
+    if (order.partialFillAllowed && Math.random() < 0.5) { // 50% chance of partial fill for demo
+      // Simulate partial fill between 50% and 90%
+      fillRatio = 0.5 + Math.random() * 0.4;
+      
+      if (order.toChain === 'ETHEREUM') {
+        fillAmount = (BigInt(actualOutputAmount) * BigInt(Math.floor(fillRatio * 1000)) / BigInt(1000)).toString();
+      } else {
+        fillAmount = Math.floor(parseInt(actualOutputAmount) * fillRatio).toString();
+      }
+      
+      console.log(`   🧩 PARTIAL FILL: Only filling ${(fillRatio * 100).toFixed(1)}% of the order`);
+      console.log(`   🧩 Partial amount: ${order.toChain === 'ETHEREUM' ? ethers.formatEther(fillAmount) : (parseInt(fillAmount) / 100000000).toFixed(8)} ${toToken}`);
+    }
+    
     // Generate secret for this fill
     const secret = ethers.randomBytes(32);
     const secretHash = ethers.keccak256(secret);
@@ -248,7 +272,7 @@ export class ResolverServiceV2 {
     try {
       fill = await this.createFill(order.id, {
         resolver: order.toChain === 'ETHEREUM' ? this.ethereumAddress : this.aptosAddress,
-        amount: actualOutputAmount,
+        amount: fillAmount,
         secretHash,
         secretIndex: 0,
         status: 'PENDING'
@@ -268,7 +292,7 @@ export class ResolverServiceV2 {
           escrowId,
           order.receiver, // User is beneficiary on destination
           order.toToken,
-          actualOutputAmount, // Use calculated output amount
+          fillAmount, // Use partial fill amount
           secretHash,
           timelock,
           safetyDeposit
@@ -278,7 +302,7 @@ export class ResolverServiceV2 {
         destTxHash = await this.chainService.createAptosEscrow(
           ethers.getBytes(escrowId),
           order.receiver, // User is beneficiary on destination
-          actualOutputAmount, // Use calculated output amount
+          fillAmount, // Use partial fill amount
           ethers.getBytes(secretHash),
           timelock,
           safetyDeposit
@@ -306,7 +330,9 @@ export class ResolverServiceV2 {
         txHash: destTxHash,
         secretHash,
         timelock,
-        amount: actualOutputAmount
+        amount: fillAmount,
+        isPartialFill: fillRatio < 1.0,
+        fillRatio
       });
       
       console.log(`   ✅ Destination escrow created: ${escrowId}`);
@@ -390,6 +416,13 @@ export class ResolverServiceV2 {
           // Create source escrow ID
           const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
           
+          // Calculate proportional source amount for partial fills
+          let sourceAmount = order.fromAmount;
+          if (fillRatio < 1.0) {
+            sourceAmount = (BigInt(order.fromAmount) * BigInt(Math.floor(fillRatio * 1000)) / BigInt(1000)).toString();
+            console.log(`   🧩 Partial source amount: ${ethers.formatEther(sourceAmount)} WETH`);
+          }
+          
           // Create source escrow with user as depositor (Fusion+ flow)
           // Use createEscrowFor to pull tokens from user's wallet
           const sourceTxHash = await this.chainService.createEthereumEscrowFor(
@@ -397,7 +430,7 @@ export class ResolverServiceV2 {
             order.maker, // User is the depositor
             this.ethereumAddress, // Resolver is beneficiary on source
             order.fromToken,
-            order.fromAmount,
+            sourceAmount, // Use partial amount if applicable
             secretHash,
             timelock
           );
@@ -410,7 +443,7 @@ export class ResolverServiceV2 {
             escrowId: sourceEscrowId,
             chain: 'ETHEREUM',
             txHash: sourceTxHash,
-            amount: order.fromAmount
+            amount: sourceAmount
           });
           
           // Mark this escrow as auto-created to prevent double processing

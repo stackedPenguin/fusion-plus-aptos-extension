@@ -6,6 +6,7 @@ import './App.css';
 import SwapInterface from './components/SwapInterface';
 import TransactionPanel from './components/TransactionPanel';
 import { OrderService } from './services/OrderService';
+import DarkVeil from './components/DarkVeil';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -155,16 +156,45 @@ function App() {
 
   return (
     <div className="App">
-      <header className="App-header">
-        <div className="header-content">
+      <div className="app-background">
+        <DarkVeil 
+          hueShift={180}
+          noiseIntensity={0.03}
+          scanlineIntensity={0.05}
+          speed={0.3}
+          scanlineFrequency={0.8}
+          warpAmount={0.8}
+          resolutionScale={0.8}
+        />
+      </div>
+
+      <div className="app-layout">
+        <div className="main-content">
           <div className="logo-section">
             <h1>Fusion+</h1>
             <span className="beta-badge">BETA</span>
           </div>
           
-          <div className="wallet-section">
+          <div className="swap-container">
+            <SwapInterface
+              ethAccount={ethAccount}
+              aptosAccount={aptosAccount?.address || null}
+              ethSigner={ethSigner}
+              orderService={orderService}
+              ethBalance={ethBalance}
+              aptosBalance={aptosBalance}
+            />
+          </div>
+        </div>
+        
+        <div className="sidebar">
+          <div className="sidebar-section wallet-section">
+            <h3 className="sidebar-section-title">Wallets</h3>
+            
             <div className={`wallet-card ${ethAccount ? 'connected' : ''}`}>
-              <div className="wallet-icon">Ξ</div>
+              <div className="wallet-icon">
+                <img src="/metamask-icon.png" alt="MetaMask" />
+              </div>
               <div>
                 <h3>Ethereum</h3>
                 {ethAccount ? (
@@ -181,7 +211,9 @@ function App() {
             </div>
 
             <div className={`wallet-card ${aptosAccount ? 'connected' : ''}`}>
-              <div className="wallet-icon">A</div>
+              <div className="wallet-icon">
+                <img src="/petra.png" alt="Petra" />
+              </div>
               <div>
                 <h3>Aptos</h3>
                 {aptosAccount ? (
@@ -202,26 +234,15 @@ function App() {
               </div>
             </div>
           </div>
+          
+          <div className="sidebar-section transaction-section">
+            <TransactionPanel
+              ethAccount={ethAccount}
+              aptosAccount={aptosAccount?.address || null}
+              orderService={orderService}
+            />
+          </div>
         </div>
-      </header>
-
-      <div className="main-container">
-        <div className="swap-container">
-          <SwapInterface
-            ethAccount={ethAccount}
-            aptosAccount={aptosAccount?.address || null}
-            ethSigner={ethSigner}
-            orderService={orderService}
-            ethBalance={ethBalance}
-            aptosBalance={aptosBalance}
-          />
-        </div>
-        
-        <TransactionPanel
-          ethAccount={ethAccount}
-          aptosAccount={aptosAccount?.address || null}
-          orderService={orderService}
-        />
       </div>
     </div>
   );
