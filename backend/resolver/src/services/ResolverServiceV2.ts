@@ -765,8 +765,12 @@ export class ResolverServiceV2 {
       if (order.fromChain === 'APTOS') {
         // For APT source, withdraw from Aptos escrow
         console.log('   🪙 Withdrawing from Aptos source escrow...');
+        // sourceEscrowId is already a hex string, convert to bytes
+        const escrowIdBytes = ethers.getBytes(sourceEscrowId);
+        console.log('   📝 Escrow ID (hex):', sourceEscrowId);
+        console.log('   📝 Escrow ID (bytes):', Array.from(escrowIdBytes));
         withdrawTx = await this.chainService.withdrawAptosEscrow(
-          ethers.getBytes(sourceEscrowId),
+          escrowIdBytes,
           secret
         );
       } else {
@@ -1063,27 +1067,41 @@ export class ResolverServiceV2 {
           transaction,
         });
         
-        const transactionRes = await this.chainService.aptosChainService.aptos.transaction.submit.simple({
+        const pendingTx = await this.chainService.aptosChainService.aptos.transaction.submit.simple({
           transaction,
           senderAuthenticator,
         });
         
-        console.log('   ✅ APT escrow created on-chain!');
-        console.log('   📋 Transaction hash:', transactionRes.hash);
+        console.log('   ⏳ Transaction submitted:', pendingTx.hash);
         
-        // Emit event for successful escrow creation
-        const createdEscrowId = ethers.hexlify(new Uint8Array(signedOrder.orderMessage.escrow_id));
-        console.log('   📝 Created escrow ID:', createdEscrowId);
-        console.log('   📝 Escrow ID bytes:', signedOrder.orderMessage.escrow_id);
-        
-        this.socket.emit('escrow:source:created', {
-          orderId: order.id,
-          escrowId: createdEscrowId,
-          chain: 'APTOS',
-          txHash: transactionRes.hash,
-          amount: order.fromAmount,
-          secretHash: signedOrder.secretHash || ethers.hexlify(new Uint8Array(signedOrder.orderMessage.hashlock))
+        // Wait for transaction confirmation
+        const executedTx = await this.chainService.aptosChainService.aptos.waitForTransaction({
+          transactionHash: pendingTx.hash,
+          options: { checkSuccess: true }
         });
+        
+        console.log('   ✅ APT escrow created on-chain!');
+        console.log('   📋 Transaction hash:', executedTx.hash);
+        console.log('   📋 Transaction success:', executedTx.success);
+        
+        // Only emit event if transaction was successful
+        if (executedTx.success) {
+          const createdEscrowId = ethers.hexlify(new Uint8Array(signedOrder.orderMessage.escrow_id));
+          console.log('   📝 Created escrow ID:', createdEscrowId);
+          console.log('   📝 Escrow ID bytes:', signedOrder.orderMessage.escrow_id);
+          
+          this.socket.emit('escrow:source:created', {
+            orderId: order.id,
+            escrowId: createdEscrowId,
+            chain: 'APTOS',
+            txHash: executedTx.hash,
+            amount: order.fromAmount,
+            secretHash: signedOrder.secretHash || ethers.hexlify(new Uint8Array(signedOrder.orderMessage.hashlock))
+          });
+        } else {
+          console.error('   ❌ Transaction failed:', executedTx.vm_status);
+          throw new Error(`Failed to create escrow: ${executedTx.vm_status}`);
+        }
         
       } catch (txError: any) {
         console.error('   ❌ Failed to create delegated escrow:', txError);

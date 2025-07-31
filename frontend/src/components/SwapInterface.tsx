@@ -187,8 +187,72 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         finalOrderData = { ...orderData, signature };
         
         console.log('Order created with WETH (no permit - using approval):', finalOrderData);
+      } else if (fromChain === Chain.APTOS) {
+        // For APT -> ETH swaps, sign the Fusion+ intent BEFORE any escrows are created
+        setSwapStatus({ stage: 'submitting', message: 'Signing Fusion+ intent...' });
+        await logger.logSwapStep('🔏 Signing Fusion+ intent', 'Creating gasless swap order');
+        
+        // Create timestamp and expiry
+        const now = Math.floor(Date.now() / 1000);
+        const expiry = now + 300; // 5 minutes from now
+        const nonce = Date.now();
+        
+        // Create the order message to sign (we'll use this later for escrow creation)
+        const sourceEscrowId = ethers.id(orderData.nonce + '-source-' + secretHash);
+        const orderMessage = {
+          escrow_id: Array.from(ethers.getBytes(sourceEscrowId)),
+          depositor: aptosAccount,
+          beneficiary: CONTRACTS.RESOLVER.APTOS,
+          amount: orderData.fromAmount,
+          hashlock: Array.from(ethers.getBytes(secretHash)), // User's secret hash
+          timelock: orderData.deadline,
+          nonce: nonce,
+          expiry: expiry
+        };
+        
+        console.log('Order to sign:', orderMessage);
+        
+        try {
+          // Get account info for public key
+          const accountInfo = await (window as any).aptos.account();
+          console.log('Account info:', accountInfo);
+          
+          // Create a human-readable message for signing
+          const readableMessage = `Fusion+ Swap Order:
+From: ${(parseInt(orderData.fromAmount) / 100000000).toFixed(4)} APT
+To: ${orderData.minToAmount} WETH
+Beneficiary: ${CONTRACTS.RESOLVER.APTOS}
+Order ID: ${orderData.nonce}
+Nonce: ${nonce}
+Expires: ${new Date(expiry * 1000).toLocaleString()}`;
+          
+          // Sign the message using Aptos wallet
+          const signatureResponse = await (window as any).aptos.signMessage({
+            message: readableMessage,
+            nonce: nonce.toString()
+          });
+          
+          console.log('✅ Intent signed!', signatureResponse);
+          
+          // Store the signed intent data for later use when creating escrow
+          (window as any).__fusionPlusIntent = {
+            orderMessage,
+            signature: signatureResponse.signature,
+            publicKey: signatureResponse.publicKey || accountInfo.publicKey,
+            fullMessage: signatureResponse.fullMessage || readableMessage,
+            nonce
+          };
+          
+          // For Aptos orders, signature is deferred (0x00)
+          signature = '0x00';
+          finalOrderData = { ...orderData, signature };
+          
+        } catch (error) {
+          console.error('Failed to sign intent:', error);
+          throw new Error(`Failed to sign Fusion+ intent: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
       } else {
-        // For non-Ethereum source chains, use regular signature
+        // For other chains, use regular signature
         signature = await orderService.signOrder(orderData, ethSigner);
         finalOrderData = { ...orderData, signature };
       }
@@ -288,69 +352,35 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
             console.log('🔄 Automatically triggering APT escrow creation...');
             
-            // In a real implementation, this would:
-            // 1. Use Aptos SDK to create the escrow transaction
-            // 2. Prompt the user's Aptos wallet to sign
-            // 3. Submit the transaction
+            // Use the pre-signed intent data
+            const signedIntent = (window as any).__fusionPlusIntent;
+            if (!signedIntent) {
+              console.error('No signed intent found! This should not happen.');
+              setSwapStatus({
+                stage: 'error',
+                message: '❌ Missing signed intent data',
+                orderId
+              });
+              return;
+            }
             
-            // Sign off-chain order for Fusion+ protocol
+            // Update the order message with the actual timelock from destination escrow
+            signedIntent.orderMessage.timelock = data.timelock;
+            
+            // Send the pre-signed intent to the resolver
             setTimeout(async () => {
-              console.log('📝 Signing off-chain Fusion+ order...');
-              await logger.logSwapStep('🔏 Signing Fusion+ order', 'Creating gasless swap intent');
-              
-              // Use the user's secret hash, not the resolver's
-              const userSecretHash = (window as any).__fusionPlusSecret?.secretHash || data.secretHash;
-              const sourceEscrowId = ethers.id(data.orderId + '-source-' + userSecretHash);
-              
-              // Create timestamp and expiry
-              const now = Math.floor(Date.now() / 1000);
-              const expiry = now + 300; // 5 minutes from now
-              const nonce = Date.now();
-              
-              // Create the order message to sign
-              const orderMessage = {
-                escrow_id: Array.from(ethers.getBytes(sourceEscrowId)),
-                depositor: aptosAccount,
-                beneficiary: CONTRACTS.RESOLVER.APTOS,
-                amount: currentOrderData.fromAmount,
-                hashlock: Array.from(ethers.getBytes(userSecretHash)), // Use user's secret hash
-                timelock: data.timelock,
-                nonce: nonce,
-                expiry: expiry
-              };
-              
-              console.log('Order to sign:', orderMessage);
+              console.log('📝 Sending pre-signed Fusion+ order to resolver...');
+              await logger.logSwapStep('📤 Submitting signed intent', 'Enabling gasless APT escrow creation');
               
               try {
-                // Get account info for public key
-                const accountInfo = await (window as any).aptos.account();
-                console.log('Account info:', accountInfo);
-                
-                // Create a human-readable message for signing
-                const readableMessage = `Fusion+ Swap Order:
-From: ${(parseInt(currentOrderData.fromAmount) / 100000000).toFixed(4)} APT
-To: ${currentOrderData.minToAmount} WETH
-Beneficiary: ${CONTRACTS.RESOLVER.APTOS}
-Order ID: ${data.orderId}
-Nonce: ${nonce}
-Expires: ${new Date(expiry * 1000).toLocaleString()}`;
-                
-                // Sign the message using Petra wallet
-                const signatureResponse = await (window as any).aptos.signMessage({
-                  message: readableMessage,
-                  nonce: nonce.toString()
-                });
-                
-                console.log('✅ Order signed!', signatureResponse);
-                
                 // Send signed order to resolver via order engine
                 const socket = (orderService as any).socket;
                 socket.emit('order:signed', {
                   orderId: data.orderId,
-                  orderMessage: orderMessage,
-                  signature: signatureResponse.signature,
-                  publicKey: accountInfo.publicKey,
-                  fullMessage: signatureResponse.fullMessage || readableMessage,
+                  orderMessage: signedIntent.orderMessage,
+                  signature: signedIntent.signature,
+                  publicKey: signedIntent.publicKey,
+                  fullMessage: signedIntent.fullMessage,
                   fromChain: 'APTOS',
                   toChain: 'ETHEREUM',
                   fromAmount: currentOrderData.fromAmount,

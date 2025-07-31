@@ -116,6 +116,7 @@ export class AptosChainServiceV2 {
     try {
       console.log('Withdrawing from Aptos escrow...');
       console.log('  Escrow ID:', ethers.hexlify(escrowId));
+      console.log('  Escrow ID bytes:', Array.from(escrowId));
       console.log('  Secret:', ethers.hexlify(secret));
       console.log('  Secret length:', secret.length);
       
