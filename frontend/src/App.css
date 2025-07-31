@@ -149,6 +149,19 @@ body {
   width: 100%;
 }
 
+.wallet-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wallet-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .wallet-card:hover {
   border-color: rgba(29, 200, 114, 0.5);
   background: rgba(35, 35, 41, 0.8);
@@ -192,6 +205,24 @@ body {
   font-weight: 500;
   cursor: pointer;
   padding: 0;
+}
+
+.disconnect-btn {
+  background: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-secondary) !important;
+  font-size: 12px !important;
+  padding: 4px 12px !important;
+  border-radius: 6px;
+  margin-top: 4px;
+  align-self: flex-start;
+  transition: all 0.2s ease;
+}
+
+.disconnect-btn:hover {
+  border-color: var(--error) !important;
+  color: var(--error) !important;
+  background: rgba(255, 59, 48, 0.1) !important;
 }
 
 .wallet-card button:hover {
@@ -307,6 +338,18 @@ body {
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: all 0.3s ease;
+  position: relative;
+  z-index: 1;
+}
+
+/* Ensure the from token group has higher z-index when dropdown is open */
+.token-input-group:has(.token-menu) {
+  z-index: 1001;
+}
+
+/* Ensure the destination token input has lower z-index */
+.token-input-group:last-child {
+  z-index: 0;
 }
 
 .token-input-group:hover {

@@ -195,14 +195,17 @@ function App() {
               <div className="wallet-icon">
                 <img src="/metamask-icon.png" alt="MetaMask" />
               </div>
-              <div>
+              <div className="wallet-content">
                 <h3>Ethereum</h3>
                 {ethAccount ? (
                   <>
-                    <div className="wallet-address">
-                      {ethAccount.slice(0, 6)}...{ethAccount.slice(-4)}
+                    <div className="wallet-info">
+                      <div className="wallet-address">
+                        {ethAccount.slice(0, 6)}...{ethAccount.slice(-4)}
+                      </div>
+                      <div className="balance-info">{parseFloat(ethBalance).toFixed(4)} ETH</div>
                     </div>
-                    <div className="balance-info">{parseFloat(ethBalance).toFixed(4)} ETH</div>
+                    <button className="disconnect-btn" onClick={disconnectEthereum}>Disconnect</button>
                   </>
                 ) : (
                   <button onClick={connectEthereum}>Connect</button>
@@ -214,14 +217,17 @@ function App() {
               <div className="wallet-icon">
                 <img src="/petra.png" alt="Petra" />
               </div>
-              <div>
+              <div className="wallet-content">
                 <h3>Aptos</h3>
                 {aptosAccount ? (
                   <>
-                    <div className="wallet-address">
-                      {aptosAccount.address.slice(0, 6)}...{aptosAccount.address.slice(-4)}
+                    <div className="wallet-info">
+                      <div className="wallet-address">
+                        {aptosAccount.address.slice(0, 6)}...{aptosAccount.address.slice(-4)}
+                      </div>
+                      <div className="balance-info">{aptosBalance} APT</div>
                     </div>
-                    <div className="balance-info">{aptosBalance} APT</div>
+                    <button className="disconnect-btn" onClick={disconnectAptos}>Disconnect</button>
                   </>
                 ) : (
                   <button onClick={() => {
