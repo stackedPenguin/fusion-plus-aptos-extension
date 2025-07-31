@@ -35,6 +35,7 @@ export const CreateOrderSchema = z.object({
   deadline: z.number(),
   nonce: z.string(),
   partialFillAllowed: z.boolean().default(false),
+  secretHash: z.string().optional(), // User-generated secret hash for Fusion+ protocol
   secretHashes: z.array(z.string()).optional(), // For partial fills using Merkle tree
   // Optional permit for automatic transfers
   permit: PermitSchema.optional(),

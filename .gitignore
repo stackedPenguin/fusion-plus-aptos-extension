@@ -52,3 +52,5 @@ tmp/
 temp/
 rules.md
 .fusion-plus-pids
+aptos_to_weth_flow.md
+secret_flow.md

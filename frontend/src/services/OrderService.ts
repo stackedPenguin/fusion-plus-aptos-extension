@@ -20,6 +20,7 @@ export interface CreateOrderDto {
   nonce: string;
   partialFillAllowed: boolean;
   signature?: string;
+  secretHash?: string; // User-generated secret hash for Fusion+ protocol
 }
 
 const EIP712_DOMAIN = {
@@ -54,14 +55,13 @@ export class OrderService {
   }
 
   async signOrder(orderData: CreateOrderDto, signer: ethers.Signer): Promise<string> {
-    // For cross-chain orders involving Aptos, use development mode signature
-    // This is temporary until we implement proper cross-chain signature validation
-    if (orderData.fromChain === Chain.APTOS || orderData.toChain === Chain.APTOS) {
-      console.log('Using development mode signature for cross-chain order');
-      return '0x00';
+    // For Aptos orders, signature is handled separately through message signing
+    if (orderData.fromChain === Chain.APTOS) {
+      // APT to ETH swaps use off-chain message signing, not EIP-712
+      return '0x00'; // Placeholder - actual signing happens in SwapInterface
     }
 
-    // For Ethereum-only orders, use proper EIP-712 signing
+    // For Ethereum orders, use proper EIP-712 signing
     const domain = { ...EIP712_DOMAIN };
     
     const types = {

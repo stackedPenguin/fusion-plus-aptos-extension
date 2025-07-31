@@ -195,6 +195,10 @@ export class ChainServiceSimple {
     }
   }
 
+  get aptosChainService(): AptosChainServiceV2 {
+    return this.aptos;
+  }
+
   async getAptosBalance(address: string): Promise<number> {
     const balance = await this.aptos.getBalance(address);
     return parseInt(balance);

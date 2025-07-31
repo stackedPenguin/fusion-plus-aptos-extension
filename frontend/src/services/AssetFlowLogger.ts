@@ -120,7 +120,7 @@ export class AssetFlowLogger {
     return balances;
   }
 
-  async logPreSwapState(fromAmount: string, selectedToken: string): Promise<void> {
+  async logPreSwapState(fromAmount: string, selectedToken: string, fromChain?: string): Promise<void> {
     console.log('\n🔍 ========== PRE-SWAP ASSET ANALYSIS ==========');
     
     const userBalances = await this.getUserBalances();
@@ -140,12 +140,27 @@ export class AssetFlowLogger {
     console.log(`   • APT: ${resolverBalances.aptos.apt}`);
     
     console.log('\n💡 SWAP FLOW EXPLANATION:');
-    console.log('   1. User approves WETH to escrow contract (already done)');
-    console.log('   2. Resolver creates destination escrow on Aptos (locks resolver APT)');
-    console.log('   3. Resolver creates source escrow on Ethereum (pulls user WETH)');
-    console.log('   4. Resolver reveals secret and withdraws user WETH');
-    console.log('   5. Resolver withdraws APT escrow to user wallet');
-    console.log('   6. Net result: User WETH → User APT, Resolver gains WETH, loses APT');
+    
+    // Determine swap direction based on fromChain parameter
+    const isAptosToEthereum = fromChain === 'APTOS' || (selectedToken === 'APT' && !fromChain);
+    
+    if (isAptosToEthereum) {
+      // APT -> WETH swap
+      console.log('   1. Resolver creates destination escrow on Ethereum (locks resolver WETH)');
+      console.log('   2. User creates source escrow on Aptos (locks user APT)');
+      console.log('   3. Resolver reveals secret and withdraws user APT');
+      console.log('   4. User uses revealed secret to withdraw WETH from destination escrow');
+      console.log('   5. Net result: User APT → User WETH, Resolver gains APT, loses WETH');
+    } else {
+      // WETH -> APT swap
+      console.log('   1. User approves WETH to escrow contract (already done)');
+      console.log('   2. Resolver creates destination escrow on Aptos (locks resolver APT)');
+      console.log('   3. Resolver creates source escrow on Ethereum (pulls user WETH)');
+      console.log('   4. Resolver reveals secret and withdraws user WETH');
+      console.log('   5. Resolver withdraws APT escrow to user wallet');
+      console.log('   6. Net result: User WETH → User APT, Resolver gains WETH, loses APT');
+    }
+    
     console.log('============================================\n');
   }
 

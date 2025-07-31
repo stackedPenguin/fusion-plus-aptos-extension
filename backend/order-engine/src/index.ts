@@ -28,7 +28,8 @@ app.get('/health', (req, res) => {
 });
 
 // WebSocket
-setupOrderWebSocket(server, orderService);
+const io = setupOrderWebSocket(server, orderService);
+
 
 // Cleanup expired orders every minute
 setInterval(() => {

@@ -1,0 +1,15 @@
+{
+  "name": "fusion-plus-scripts",
+  "version": "1.0.0",
+  "description": "Scripts for Fusion+ testing",
+  "scripts": {
+    "test:apt-to-weth": "node test-apt-to-weth.js"
+  },
+  "dependencies": {
+    "ethers": "^6.9.0",
+    "aptos": "^1.21.0",
+    "axios": "^1.6.2",
+    "socket.io-client": "^4.7.2",
+    "dotenv": "^16.3.1"
+  }
+}

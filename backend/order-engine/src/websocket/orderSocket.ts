@@ -6,7 +6,7 @@ import { Order, Fill } from '../types/order';
 export function setupOrderWebSocket(server: HttpServer, orderService: OrderService): SocketServer {
   const io = new SocketServer(server, {
     cors: {
-      origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+      origin: '*', // Allow all origins for testing
       methods: ['GET', 'POST']
     }
   });
@@ -98,6 +98,51 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
       io.emit('swap:completed', data);
       if (data.orderId) {
         io.to(`order:${data.orderId}`).emit('order:completed', data);
+      }
+    });
+
+    socket.on('order:failed', (data: any) => {
+      console.log('Relaying order:failed event:', data);
+      io.emit('order:failed', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:failed', data);
+      }
+    });
+
+    socket.on('order:signed', (data: any) => {
+      console.log('Relaying order:signed event:', data);
+      io.emit('order:signed', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:signed', data);
+      }
+    });
+    
+    // Relay secret request/reveal events for Fusion+ protocol
+    socket.on('secret:request', (data: any) => {
+      console.log('Relaying secret:request event:', data);
+      io.emit('secret:request', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('secret:request', data);
+      }
+    });
+    
+    socket.on('secret:reveal', (data: any) => {
+      console.log('Relaying secret:reveal event:', data);
+      io.emit('secret:reveal', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('secret:reveal', data);
+      }
+    });
+
+    // Handle new order submissions
+    socket.on('order:new', async (order: Order) => {
+      console.log('Received order:new from client:', order);
+      try {
+        const createdOrder = await orderService.createOrder(order);
+        socket.emit('order:created', { orderId: createdOrder.id });
+      } catch (error: any) {
+        console.error('Failed to create order:', error);
+        socket.emit('error', { message: error.message });
       }
     });
 

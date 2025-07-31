@@ -22,7 +22,7 @@ const TOKEN_ICONS = {
 };
 
 interface SwapStatus {
-  stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'approving_token' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error';
+  stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'approving_token' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error' | 'processing';
   message: string;
   orderId?: string;
   escrowHash?: string;
@@ -92,7 +92,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     const logger = new AssetFlowLogger(ethSigner, ethAccount, aptosAccount);
     
     // Log pre-swap state asynchronously to avoid blocking
-    logger.logPreSwapState(fromAmount, selectedToken).catch(err => 
+    logger.logPreSwapState(fromAmount, fromChain === Chain.APTOS ? 'APT' : selectedToken, fromChain === Chain.APTOS ? 'APTOS' : 'ETHEREUM').catch(err => 
       console.error('Failed to log pre-swap state:', err)
     );
     
@@ -140,6 +140,18 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
       await logger.logSwapStep('📋 Preparing swap order');
       
+      // Generate secret for the swap (as per Fusion+ spec, user creates the secret)
+      const secret = ethers.randomBytes(32);
+      const secretHash = ethers.keccak256(secret);
+      
+      // Store secret for later reveal (only after both escrows are created)
+      (window as any).__fusionPlusSecret = {
+        secret: ethers.hexlify(secret),
+        secretHash,
+        orderId: null, // Will be set after order creation
+        revealed: false
+      };
+      
       const orderData = {
         fromChain,
         toChain,
@@ -147,7 +159,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           ? CONTRACTS.ETHEREUM.WETH
           : '0x1::aptos_coin::AptosCoin', // APT
         toToken: toChain === Chain.ETHEREUM 
-          ? ethers.ZeroAddress // ETH
+          ? (fromChain === Chain.APTOS ? CONTRACTS.ETHEREUM.WETH : ethers.ZeroAddress) // WETH for APT->ETH, ETH for ETH->APT
           : '0x1::aptos_coin::AptosCoin', // APT
         fromAmount: swapAmount,
         minToAmount: toChain === Chain.ETHEREUM
@@ -157,7 +169,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
         nonce: Date.now().toString(),
-        partialFillAllowed: allowPartialFill
+        partialFillAllowed: allowPartialFill,
+        secretHash // Include user-generated secret hash in the order
       };
 
       let finalOrderData: any;
@@ -193,6 +206,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         orderId 
       });
 
+      // Update stored secret with orderId
+      if ((window as any).__fusionPlusSecret) {
+        (window as any).__fusionPlusSecret.orderId = orderId;
+      }
+
+      // Store order data for later use
+      const currentOrderData = orderData;
+      
       // Notify the transaction panel
       if ((orderService as any).notifyOrderCreated) {
         (orderService as any).notifyOrderCreated(orderId, orderData);
@@ -214,17 +235,46 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
 
       // Also listen for general escrow events
       const socket = (orderService as any).socket;
+      console.log('🔌 Socket connected:', socket.connected);
+      console.log('🆔 Socket ID:', socket.id);
+      
+      // Listen for order errors
+      socket.on('order:error', (data: any) => {
+        if (data.orderId === orderId) {
+          console.error('Order error:', data);
+          setSwapStatus({
+            stage: 'error',
+            message: `❌ ${data.reason || data.error}`,
+            orderId
+          });
+          setIsLoading(false);
+        }
+      });
+      
       socket.on('escrow:destination:created', async (data: any) => {
         if (data.orderId === orderId) {
-          const amount = (parseInt(data.amount || '0') / 100000000).toFixed(4);
-          let message = `Resolver locked ${amount} APT on Aptos!`;
+          // Format amount based on destination chain
+          let amount: string;
+          let tokenSymbol: string;
+          
+          if (data.chain === 'APTOS') {
+            // APT has 8 decimals
+            amount = (parseInt(data.amount || '0') / 100000000).toFixed(4);
+            tokenSymbol = 'APT';
+          } else {
+            // ETH/WETH has 18 decimals
+            amount = ethers.formatEther(data.amount || '0');
+            tokenSymbol = 'WETH';
+          }
+          
+          let message = `Resolver locked ${amount} ${tokenSymbol} on ${data.chain === 'APTOS' ? 'Aptos' : 'Ethereum'}!`;
           
           if (data.isPartialFill) {
             const fillPercent = ((data.fillRatio || 0) * 100).toFixed(1);
-            message = `🧩 PARTIAL FILL: Resolver locked ${amount} APT (${fillPercent}% of order)`;
-            await logger.logSwapStep('🧩 Partial fill on destination', `Resolver filled ${fillPercent}% of your order with ${amount} APT`);
+            message = `🧩 PARTIAL FILL: Resolver locked ${amount} ${tokenSymbol} (${fillPercent}% of order)`;
+            await logger.logSwapStep('🧩 Partial fill on destination', `Resolver filled ${fillPercent}% of your order with ${amount} ${tokenSymbol}`);
           } else {
-            await logger.logSwapStep('🔒 Destination escrow created on Aptos', `Resolver locked ${amount} APT`);
+            await logger.logSwapStep(`🔒 Destination escrow created on ${data.chain === 'APTOS' ? 'Aptos' : 'Ethereum'}`, `Resolver locked ${amount} ${tokenSymbol}`);
           }
           
           setSwapStatus({
@@ -233,6 +283,118 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             orderId,
             escrowHash: data.secretHash
           });
+          
+          // For APT -> WETH swaps, automatically trigger APT escrow creation
+          if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
+            console.log('🔄 Automatically triggering APT escrow creation...');
+            
+            // In a real implementation, this would:
+            // 1. Use Aptos SDK to create the escrow transaction
+            // 2. Prompt the user's Aptos wallet to sign
+            // 3. Submit the transaction
+            
+            // Sign off-chain order for Fusion+ protocol
+            setTimeout(async () => {
+              console.log('📝 Signing off-chain Fusion+ order...');
+              await logger.logSwapStep('🔏 Signing Fusion+ order', 'Creating gasless swap intent');
+              
+              // Use the user's secret hash, not the resolver's
+              const userSecretHash = (window as any).__fusionPlusSecret?.secretHash || data.secretHash;
+              const sourceEscrowId = ethers.id(data.orderId + '-source-' + userSecretHash);
+              
+              // Create timestamp and expiry
+              const now = Math.floor(Date.now() / 1000);
+              const expiry = now + 300; // 5 minutes from now
+              const nonce = Date.now();
+              
+              // Create the order message to sign
+              const orderMessage = {
+                escrow_id: Array.from(ethers.getBytes(sourceEscrowId)),
+                depositor: aptosAccount,
+                beneficiary: CONTRACTS.RESOLVER.APTOS,
+                amount: currentOrderData.fromAmount,
+                hashlock: Array.from(ethers.getBytes(userSecretHash)), // Use user's secret hash
+                timelock: data.timelock,
+                nonce: nonce,
+                expiry: expiry
+              };
+              
+              console.log('Order to sign:', orderMessage);
+              
+              try {
+                // Get account info for public key
+                const accountInfo = await (window as any).aptos.account();
+                console.log('Account info:', accountInfo);
+                
+                // Create a human-readable message for signing
+                const readableMessage = `Fusion+ Swap Order:
+From: ${(parseInt(currentOrderData.fromAmount) / 100000000).toFixed(4)} APT
+To: ${currentOrderData.minToAmount} WETH
+Beneficiary: ${CONTRACTS.RESOLVER.APTOS}
+Order ID: ${data.orderId}
+Nonce: ${nonce}
+Expires: ${new Date(expiry * 1000).toLocaleString()}`;
+                
+                // Sign the message using Petra wallet
+                const signatureResponse = await (window as any).aptos.signMessage({
+                  message: readableMessage,
+                  nonce: nonce.toString()
+                });
+                
+                console.log('✅ Order signed!', signatureResponse);
+                
+                // Send signed order to resolver via order engine
+                const socket = (orderService as any).socket;
+                socket.emit('order:signed', {
+                  orderId: data.orderId,
+                  orderMessage: orderMessage,
+                  signature: signatureResponse.signature,
+                  publicKey: accountInfo.publicKey,
+                  fullMessage: signatureResponse.fullMessage || readableMessage,
+                  fromChain: 'APTOS',
+                  toChain: 'ETHEREUM',
+                  fromAmount: currentOrderData.fromAmount,
+                  toAmount: currentOrderData.minToAmount,
+                  secretHash: userSecretHash // Send user's secret hash
+                });
+                
+                await logger.logSwapStep('✅ Fusion+ order signed', 'Waiting for resolver to create escrows (gasless)');
+                
+                // Update status to show we're waiting for resolver
+                setSwapStatus({
+                  stage: 'processing',
+                  message: 'Resolver creating escrows...',
+                  orderId: data.orderId
+                });
+                
+              } catch (error: any) {
+                console.error('Failed to sign order:', error);
+                
+                // Update transaction status to failed
+                const socket = (orderService as any).socket;
+                socket.emit('order:failed', {
+                  orderId: data.orderId,
+                  reason: error.message || 'Failed to sign order',
+                  stage: 'order_signing'
+                });
+                
+                // Update swap status
+                setSwapStatus({
+                  stage: 'error',
+                  message: 'Failed to sign order',
+                  orderId: data.orderId
+                });
+                setIsLoading(false);
+                
+                // Show user-friendly error message
+                if (error.code === 4001) {
+                  alert('Signature rejected by user');
+                } else {
+                  alert(`Failed to sign order: ${error.message || 'Unknown error'}`);
+                }
+              }
+            }, 1000);
+          }
         }
       });
       
@@ -302,6 +464,31 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         }
       });
       
+      // Listen for secret request from resolver (after both escrows exist)
+      socket.on('secret:request', async (data: any) => {
+        console.log('🔐 Received secret:request event:', data);
+        console.log('   Current orderId:', orderId);
+        console.log('   Stored secret data:', (window as any).__fusionPlusSecret);
+        
+        if (data.orderId === orderId && (window as any).__fusionPlusSecret) {
+          const secretData = (window as any).__fusionPlusSecret;
+          if (!secretData.revealed && secretData.orderId === orderId) {
+            console.log('🔐 Resolver requesting secret, both escrows confirmed');
+            await logger.logSwapStep('🔐 Revealing secret to resolver', 'Both escrows confirmed on-chain');
+            
+            // Reveal secret to resolver
+            socket.emit('secret:reveal', {
+              orderId: orderId,
+              secret: secretData.secret,
+              secretHash: secretData.secretHash
+            });
+            
+            secretData.revealed = true;
+            await logger.logSwapStep('✅ Secret revealed', 'Resolver can now complete the swap');
+          }
+        }
+      });
+      
       // Listen for manual withdrawal required event
       socket.on('swap:manual_withdrawal_required', async (data: any) => {
         if (data.orderId === orderId) {
@@ -322,10 +509,12 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       // Clean up after 30 minutes
       setTimeout(() => {
         orderService.unsubscribeFromOrderUpdates(orderId);
+        socket.off('order:error');
         socket.off('escrow:destination:created');
         socket.off('escrow:source:created');
         socket.off('escrow:source:withdrawn');
         socket.off('swap:completed');
+        socket.off('swap:manual_withdrawal_required');
         if (swapStatus.stage === 'waiting') {
           setSwapStatus({
             stage: 'idle',
@@ -490,12 +679,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   }, [ethAccount, ethSigner]);
 
 
-  // Fetch WETH balance
+  // Fetch WETH balance only on initial mount and status changes
   useEffect(() => {
     fetchWethBalance();
-    const interval = setInterval(fetchWethBalance, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
-  }, [fetchWethBalance]);
+  }, [fetchWethBalance, swapStatus.stage]); // Re-fetch when swap status changes
 
 
   // Auto-select WETH if user has WETH balance but no ETH
@@ -694,11 +881,20 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             <div className="token-select">
               <img 
                 className="token-icon" 
-                src={toChain === Chain.ETHEREUM ? TOKEN_ICONS.ETH : TOKEN_ICONS.APT}
-                alt={toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+                src={toChain === Chain.ETHEREUM ? 
+                  (fromChain === Chain.APTOS ? TOKEN_ICONS.WETH : TOKEN_ICONS.ETH) : 
+                  TOKEN_ICONS.APT
+                }
+                alt={toChain === Chain.ETHEREUM ? 
+                  (fromChain === Chain.APTOS ? 'WETH' : 'ETH') : 
+                  'APT'
+                }
               />
               <span className="token-symbol">
-                {toChain === Chain.ETHEREUM ? 'ETH' : 'APT'}
+                {toChain === Chain.ETHEREUM ? 
+                  (fromChain === Chain.APTOS ? 'WETH' : 'ETH') : 
+                  'APT'
+                }
               </span>
             </div>
             <input
@@ -814,34 +1010,15 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             )}
             {swapStatus.escrowHash && swapStatus.stage !== 'completed' && (
               <div className="escrow-info">
-                {fromChain === Chain.APTOS ? (
-                  <div className="next-step">
-                    <strong>Next Step: Create Source Escrow</strong>
-                    <br />
-                    <small>The resolver has locked ETH. Now you need to lock your APT.</small>
-                    <button 
-                      className="create-escrow-button"
-                      onClick={async () => {
-                        // In a real implementation, this would trigger the Aptos wallet
-                        // to create an escrow transaction
-                        alert('APT escrow creation would be triggered here through your Aptos wallet');
-                        console.log('Create APT escrow with:', {
-                          orderId: swapStatus.orderId,
-                          secretHash: swapStatus.escrowHash,
-                          amount: fromAmount
-                        });
-                      }}
-                    >
-                      Create APT Escrow
-                    </button>
-                  </div>
-                ) : (
-                  <div className="next-step">
-                    <strong>Processing swap...</strong>
-                    <br />
-                    <small>The resolver will complete the swap automatically.</small>
-                  </div>
-                )}
+                <div className="next-step">
+                  <strong>Processing swap...</strong>
+                  <br />
+                  <small>
+                    {fromChain === Chain.APTOS 
+                      ? 'Please approve the APT escrow transaction in your Aptos wallet...'
+                      : 'The resolver will complete the swap automatically.'}
+                  </small>
+                </div>
               </div>
             )}
           </div>

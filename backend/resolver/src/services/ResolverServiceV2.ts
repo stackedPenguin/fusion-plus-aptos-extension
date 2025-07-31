@@ -6,7 +6,7 @@ import { PriceService } from './PriceService';
 import { PermitService } from './PermitService';
 import { WETHService } from './WETHService';
 import dotenv from 'dotenv';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 dotenv.config();
 
@@ -30,6 +30,7 @@ interface Order {
   receiver: string;
   deadline: number;
   status: string;
+  secretHash?: string; // User-generated secret hash for Fusion+ protocol
   secretHashes?: string[];
   partialFillAllowed?: boolean;
   // Permit for automatic transfers
@@ -68,6 +69,13 @@ export class ResolverServiceV2 {
   private fillSecrets: Map<string, Uint8Array> = new Map();
   // Track processed events to avoid duplicates
   private processedEvents: Set<string> = new Set();
+  // Track pending swaps waiting for secret reveal
+  private pendingSecretReveals: Map<string, {
+    order: Order;
+    fill: Fill;
+    sourceEscrowId: string;
+    destinationEscrowId: string;
+  }> = new Map();
 
   constructor() {
     this.orderEngineUrl = process.env.ORDER_ENGINE_URL || 'http://localhost:3001';
@@ -92,11 +100,70 @@ export class ResolverServiceV2 {
   private setupSocketListeners() {
     this.socket.on('connect', () => {
       console.log('Connected to order engine');
+      console.log('Listening for events: order:new, escrow:source:created, order:signed');
       this.socket.emit('subscribe:active');
     });
 
     this.socket.on('order:new', (order: Order) => {
+      console.log('\n📋 Received order:new event');
       this.handleNewOrder(order);
+    });
+    
+    // Listen for APT escrow creation from frontend
+    this.socket.on('escrow:source:created', (data: any) => {
+      console.log('\n🔔 Received escrow:source:created event:', data.chain);
+      if (data.chain === 'APTOS') {
+        console.log('APT escrow created on Aptos:', data);
+        this.handleAPTEscrowCreated(data);
+      }
+    });
+
+    // Listen for signed orders (Fusion+ gasless flow)
+    this.socket.on('order:signed', async (data: any) => {
+      console.log('\n📝 Received order:signed event');
+      console.log('   From chain:', data.fromChain);
+      console.log('   Order ID:', data.orderId);
+      if (data.fromChain === 'APTOS') {
+        await this.handleSignedAptosOrder(data);
+      }
+    });
+
+    // Listen for secret reveal from user (Fusion+ spec)
+    this.socket.on('secret:reveal', async (data: any) => {
+      console.log('\n🔓 Received secret:reveal event');
+      console.log('   Order ID:', data.orderId);
+      console.log('   Secret hash:', data.secretHash);
+      
+      const pendingSwap = this.pendingSecretReveals.get(data.orderId);
+      if (pendingSwap) {
+        const secret = ethers.getBytes(data.secret);
+        
+        // Verify secret hash matches
+        const computedHash = ethers.keccak256(secret);
+        if (computedHash !== data.secretHash) {
+          console.error('   ❌ Secret hash mismatch!');
+          return;
+        }
+        
+        console.log('   ✅ Secret verified, completing swap...');
+        await this.completeSwap(
+          pendingSwap.order,
+          pendingSwap.fill,
+          secret,
+          pendingSwap.sourceEscrowId,
+          pendingSwap.destinationEscrowId
+        );
+        
+        // Clean up
+        this.pendingSecretReveals.delete(data.orderId);
+      }
+    });
+
+    // Log all events for debugging
+    this.socket.onAny((eventName, ...args) => {
+      if (!['order:new', 'escrow:source:created', 'order:signed', 'connect', 'disconnect'].includes(eventName)) {
+        console.log(`[Socket Event] ${eventName}`);
+      }
     });
 
     this.socket.on('disconnect', () => {
@@ -117,6 +184,8 @@ export class ResolverServiceV2 {
       console.log(`\n🔍 Evaluating order ${order.id}`);
       console.log(`   ${order.fromChain} → ${order.toChain}`);
       console.log(`   Amount: ${order.fromAmount} → ${order.minToAmount}`);
+      console.log(`   Order fields:`, Object.keys(order));
+      console.log(`   Order secretHash:`, order.secretHash);
       
       // Check if order is profitable
       const isProfitable = await this.checkProfitability(order);
@@ -148,20 +217,35 @@ export class ResolverServiceV2 {
     try {
       // Get exchange rate
       const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+      // Handle token mapping for price service
       const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : 
                        order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' : 
+                       order.fromToken === '0x1::aptos_coin::AptosCoin' ? 'APT' :
                        order.fromToken;
-      // Handle Aptos token address
-      const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
+      const toToken = order.toToken === ethers.ZeroAddress ? 'ETH' :
+                     order.toToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' :
+                     order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : 
+                     order.toToken;
       
+      console.log(`   🔍 Getting exchange rate for ${fromToken} -> ${toToken}`);
       const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
+      console.log(`   📈 Raw exchange rate: ${exchangeRate}`);
       
       // Calculate expected output with resolver margin
+      // Handle different decimal places for different chains
+      const fromAmountFormatted = order.fromChain === 'ETHEREUM' 
+        ? ethers.formatEther(order.fromAmount)  // 18 decimals for ETH/WETH
+        : (parseInt(order.fromAmount) / 100000000).toString(); // 8 decimals for APT
+      
+      console.log(`   📏 From amount formatted: ${fromAmountFormatted} ${fromToken}`);
+      
       const expectedOutput = this.priceService.calculateOutputAmount(
-        ethers.formatEther(order.fromAmount), 
+        fromAmountFormatted, 
         exchangeRate,
         true // Apply margin
       );
+      
+      console.log(`   🎯 Expected output (with margin): ${expectedOutput} ${toToken}`);
       
       // Compare with minimum required
       const minRequired = order.toChain === 'ETHEREUM' 
@@ -200,9 +284,43 @@ export class ResolverServiceV2 {
   }
 
   private async checkBalance(order: Order): Promise<boolean> {
-    // TODO: Check resolver's balance on destination chain
-    // Need to ensure we have enough toToken to lock in escrow
-    return true;
+    try {
+      if (order.toChain === 'ETHEREUM') {
+        // Check ETH/WETH balance
+        if (order.toToken === ethers.ZeroAddress) {
+          // Check ETH balance
+          const balance = await this.ethereumProvider.getBalance(this.ethereumAddress);
+          const required = BigInt(order.minToAmount) + ethers.parseEther('0.01'); // Extra for gas
+          return balance >= required;
+        } else {
+          // Check ERC20 balance (WETH)
+          const tokenAbi = ['function balanceOf(address) view returns (uint256)'];
+          const tokenContract = new ethers.Contract(order.toToken, tokenAbi, this.ethereumProvider);
+          const balance = await tokenContract.balanceOf(this.ethereumAddress);
+          return balance >= BigInt(order.minToAmount);
+        }
+      } else if (order.toChain === 'APTOS') {
+        // Check APT balance
+        const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            function: '0x1::coin::balance',
+            type_arguments: ['0x1::aptos_coin::AptosCoin'],
+            arguments: [this.aptosAddress]
+          })
+        });
+        
+        if (response.ok) {
+          const result = await response.json() as any[];
+          const balance = BigInt(result[0] || '0');
+          return balance >= BigInt(order.minToAmount);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking balance:', error);
+    }
+    return false;
   }
 
   private async createDestinationEscrow(order: Order) {
@@ -222,50 +340,92 @@ export class ResolverServiceV2 {
       // TODO: Execute permit transfer after creating destination escrow
     }
     
+    // For ERC20 tokens on Ethereum (like WETH), ensure approval before creating escrow
+    if (order.toChain === 'ETHEREUM' && order.toToken !== ethers.ZeroAddress) {
+      console.log(`   🎫 Checking ERC20 approval for destination escrow...`);
+      
+      try {
+        const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+        const wethService = new WETHService(this.ethereumProvider, WETH_ADDRESS);
+        const escrowAddress = process.env.ETHEREUM_ESCROW_ADDRESS!;
+        
+        // Check current allowance
+        const currentAllowance = await wethService.getAllowance(
+          this.ethereumAddress,
+          escrowAddress
+        );
+        
+        console.log(`   💰 Current WETH allowance: ${ethers.formatEther(currentAllowance)} WETH`);
+        
+        // If allowance is insufficient, approve the escrow contract
+        if (currentAllowance < ethers.parseEther('100')) { // Approve 100 WETH for multiple swaps
+          console.log(`   ✅ Approving escrow contract to spend WETH...`);
+          
+          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
+          
+          // Use the contract directly to approve
+          const wethAbi = ['function approve(address spender, uint256 amount) returns (bool)'];
+          const wethContract = new ethers.Contract(WETH_ADDRESS, wethAbi, wallet);
+          
+          const approveTx = await wethContract.approve(
+            escrowAddress,
+            ethers.parseEther('100')
+          );
+          
+          const receipt = await approveTx.wait();
+          console.log(`   ✅ WETH approval transaction: ${receipt.hash}`);
+          
+          // Wait a bit for the approval to be confirmed
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      } catch (error) {
+        console.error(`   ⚠️ Failed to check/set WETH approval:`, error);
+        // Continue anyway - the escrow creation will fail if approval is needed
+      }
+    }
+    
     // Get exchange rate and calculate actual output amount
     const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+    // Handle token mapping for price service
     const fromToken = order.fromToken === ethers.ZeroAddress ? 'ETH' : 
                      order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' : 
+                     order.fromToken === '0x1::aptos_coin::AptosCoin' ? 'APT' :
                      order.fromToken;
-    // Handle Aptos token address
-    const toToken = order.toToken === ethers.ZeroAddress || order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.toToken;
+    const toToken = order.toToken === ethers.ZeroAddress ? 'ETH' :
+                   order.toToken.toLowerCase() === WETH_ADDRESS.toLowerCase() ? 'ETH' :
+                   order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : 
+                   order.toToken;
     
     const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
+    
+    // Handle different decimal places for different chains
+    const fromAmountFormatted = order.fromChain === 'ETHEREUM' 
+      ? ethers.formatEther(order.fromAmount)  // 18 decimals for ETH/WETH
+      : (parseInt(order.fromAmount) / 100000000).toString(); // 8 decimals for APT
+    
     const outputAmount = this.priceService.calculateOutputAmount(
-      ethers.formatEther(order.fromAmount),
+      fromAmountFormatted,
       exchangeRate,
       true // Apply margin
     );
     
     // Convert output amount to proper units
+    // For Ethereum, we need to limit decimal places to avoid parseEther errors
     const actualOutputAmount = order.toChain === 'ETHEREUM'
-      ? ethers.parseEther(outputAmount).toString()
+      ? ethers.parseEther(parseFloat(outputAmount).toFixed(18)).toString()
       : Math.floor(parseFloat(outputAmount) * 100000000).toString(); // APT has 8 decimals
     
     console.log(`   💱 Using exchange rate: 1 ${fromToken} = ${exchangeRate.toFixed(4)} ${toToken}`);
     console.log(`   📊 Output amount: ${outputAmount} ${toToken}`);
     
-    // Simulate partial fill for demonstration if enabled
+    // Use full amount - no simulated partial fills
     let fillAmount = actualOutputAmount;
     let fillRatio = 1.0;
     
-    if (order.partialFillAllowed && Math.random() < 0.5) { // 50% chance of partial fill for demo
-      // Simulate partial fill between 50% and 90%
-      fillRatio = 0.5 + Math.random() * 0.4;
-      
-      if (order.toChain === 'ETHEREUM') {
-        fillAmount = (BigInt(actualOutputAmount) * BigInt(Math.floor(fillRatio * 1000)) / BigInt(1000)).toString();
-      } else {
-        fillAmount = Math.floor(parseInt(actualOutputAmount) * fillRatio).toString();
-      }
-      
-      console.log(`   🧩 PARTIAL FILL: Only filling ${(fillRatio * 100).toFixed(1)}% of the order`);
-      console.log(`   🧩 Partial amount: ${order.toChain === 'ETHEREUM' ? ethers.formatEther(fillAmount) : (parseInt(fillAmount) / 100000000).toFixed(8)} ${toToken}`);
-    }
-    
-    // Generate secret for this fill
-    const secret = ethers.randomBytes(32);
-    const secretHash = ethers.keccak256(secret);
+    // Use the user's secret hash from the order (Fusion+ spec: user generates secret)
+    console.log(`   🔐 Order secretHash: ${order.secretHash}`);
+    const secretHash = order.secretHash || ethers.keccak256(ethers.randomBytes(32)); // Fallback for legacy orders
+    console.log(`   🔐 Using secretHash: ${secretHash}`);
     
     // Create fill record with actual output amount
     let fill: Fill | undefined;
@@ -315,12 +475,11 @@ export class ResolverServiceV2 {
         destinationEscrowId: escrowId 
       });
       
-      // Store secret and monitor for source escrow
+      // Monitor for source escrow (secret will be provided by user later)
       this.monitoringFills.set(escrowId, {
         ...fill,
         destinationEscrowId: escrowId
       });
-      this.fillSecrets.set(fill.id, secret);
       
       // Broadcast to user that destination escrow is ready
       this.socket.emit('escrow:destination:created', {
@@ -463,8 +622,20 @@ export class ResolverServiceV2 {
           // Mark this escrow as auto-created to prevent double processing
           this.processedEvents.add(`auto-${sourceEscrowId}`);
           
-          // Continue with normal flow - reveal secret and complete swap
-          await this.completeSwap(order, fill, secret, sourceEscrowId, escrowId);
+          // Request secret from user now that both escrows exist
+          console.log('   🔐 Both escrows created, requesting secret from user...');
+          this.socket.emit('secret:request', {
+            orderId: order.id,
+            message: 'Both escrows confirmed on-chain. Please reveal your secret to complete the swap.'
+          });
+          
+          // Store pending swap info for when secret is revealed
+          this.pendingSecretReveals.set(order.id, {
+            order,
+            fill,
+            sourceEscrowId,
+            destinationEscrowId: escrowId
+          });
           
         } catch (error: any) {
           console.error(`   ❌ Failed to create source escrow:`, error);
@@ -476,6 +647,17 @@ export class ResolverServiceV2 {
       
     } catch (error) {
       console.error(`Failed to create destination escrow:`, error);
+      
+      // Emit error to frontend
+      this.socket.emit('order:error', {
+        orderId: order.id,
+        error: 'Failed to create destination escrow',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        reason: error instanceof Error && error.message.includes('insufficient') ? 
+          'Resolver has insufficient WETH balance' : 
+          'Escrow creation failed'
+      });
+      
       // Only update fill status if fill was created
       if (fill) {
         await this.updateFillStatus(order.id, fill.id, 'FAILED');
@@ -557,6 +739,10 @@ export class ResolverServiceV2 {
 
   private async completeSwap(order: Order, fill: Fill, secret: Uint8Array, sourceEscrowId: string, destEscrowId: string) {
     console.log(`\n💰 Completing swap automatically...`);
+    console.log(`   📄 Order ID: ${order.id}`);
+    console.log(`   🔑 Secret: ${ethers.hexlify(secret)}`);
+    console.log(`   📦 Source escrow ID: ${sourceEscrowId}`);
+    console.log(`   📦 Dest escrow ID: ${destEscrowId}`);
     
     try {
       // Check if fill is already completed or being processed
@@ -573,8 +759,20 @@ export class ResolverServiceV2 {
       // Reveal secret and withdraw from source escrow
       console.log('   🔓 Revealing secret and withdrawing from source escrow...');
       
-      // Withdraw from source escrow (we are the beneficiary)
-      const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      let withdrawTx: string;
+      
+      // Withdraw from source escrow based on source chain
+      if (order.fromChain === 'APTOS') {
+        // For APT source, withdraw from Aptos escrow
+        console.log('   🪙 Withdrawing from Aptos source escrow...');
+        withdrawTx = await this.chainService.withdrawAptosEscrow(
+          ethers.getBytes(sourceEscrowId),
+          secret
+        );
+      } else {
+        // For ETH/WETH source, withdraw from Ethereum escrow
+        withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      }
       
       console.log('   ✅ Successfully withdrew from source escrow!');
       
@@ -791,6 +989,125 @@ export class ResolverServiceV2 {
     );
   }
 
+  private async handleSignedAptosOrder(signedOrder: any): Promise<void> {
+    console.log('\n🔏 Processing signed Aptos order (gasless flow)');
+    
+    try {
+      // Get the original order
+      const order = this.activeOrders.get(signedOrder.orderId);
+      if (!order) {
+        console.log('   ❌ Order not found');
+        return;
+      }
+      
+      // Find the fill for this order
+      let fill: Fill | undefined;
+      for (const [_, monitoredFill] of this.monitoringFills) {
+        if (monitoredFill.orderId === order.id) {
+          fill = monitoredFill;
+          break;
+        }
+      }
+      
+      if (!fill) {
+        console.log('   ❌ No active fill for this order');
+        return;
+      }
+      
+      console.log('   🔄 Creating APT escrow on-chain (gasless for user)...');
+      
+      const escrowModule = process.env.APTOS_ESCROW_MODULE || process.env.APTOS_ESCROW_ADDRESS;
+      
+      // Create escrow transaction payload
+      const payload = {
+        function: `${escrowModule}::escrow::create_escrow_delegated`,
+        typeArguments: [],
+        functionArguments: [
+          signedOrder.orderMessage.escrow_id,
+          signedOrder.orderMessage.depositor,
+          signedOrder.orderMessage.beneficiary,
+          signedOrder.orderMessage.amount,
+          signedOrder.orderMessage.hashlock,
+          signedOrder.orderMessage.timelock.toString(),
+          signedOrder.orderMessage.nonce.toString(),
+          signedOrder.orderMessage.expiry.toString(),
+          '100000', // safety deposit (0.001 APT)
+          signedOrder.publicKey,
+          signedOrder.signature
+        ]
+      };
+      
+      console.log('   📝 Submitting delegated escrow creation transaction...');
+      console.log('   💰 Resolver paying gas fees');
+      
+      try {
+        // Get fresh sequence number and submit transaction
+        const accountInfo = await this.chainService.aptosChainService.aptos.account.getAccountInfo({
+          accountAddress: this.chainService.aptosChainService.account.accountAddress
+        });
+        
+        const transaction = await this.chainService.aptosChainService.aptos.transaction.build.simple({
+          sender: this.chainService.aptosChainService.account.accountAddress,
+          data: {
+            function: payload.function as `${string}::${string}::${string}`,
+            typeArguments: payload.typeArguments,
+            functionArguments: payload.functionArguments
+          },
+          options: {
+            accountSequenceNumber: BigInt(accountInfo.sequence_number)
+          }
+        });
+        
+        const senderAuthenticator = this.chainService.aptosChainService.aptos.transaction.sign({
+          signer: this.chainService.aptosChainService.account,
+          transaction,
+        });
+        
+        const transactionRes = await this.chainService.aptosChainService.aptos.transaction.submit.simple({
+          transaction,
+          senderAuthenticator,
+        });
+        
+        console.log('   ✅ APT escrow created on-chain!');
+        console.log('   📋 Transaction hash:', transactionRes.hash);
+        
+        // Emit event for successful escrow creation
+        const createdEscrowId = ethers.hexlify(new Uint8Array(signedOrder.orderMessage.escrow_id));
+        console.log('   📝 Created escrow ID:', createdEscrowId);
+        console.log('   📝 Escrow ID bytes:', signedOrder.orderMessage.escrow_id);
+        
+        this.socket.emit('escrow:source:created', {
+          orderId: order.id,
+          escrowId: createdEscrowId,
+          chain: 'APTOS',
+          txHash: transactionRes.hash,
+          amount: order.fromAmount,
+          secretHash: signedOrder.secretHash || ethers.hexlify(new Uint8Array(signedOrder.orderMessage.hashlock))
+        });
+        
+      } catch (txError: any) {
+        console.error('   ❌ Failed to create delegated escrow:', txError);
+        
+        // Check if it's because resolver doesn't have enough APT
+        if (txError.message?.includes('INSUFFICIENT_BALANCE')) {
+          console.log('   💸 Resolver needs more APT to front the escrow amount');
+        }
+        
+        throw txError;
+      }
+      
+    } catch (error) {
+      console.error('Failed to handle signed Aptos order:', error);
+      
+      // Notify frontend of failure
+      this.socket.emit('order:failed', {
+        orderId: signedOrder.orderId,
+        reason: 'Failed to create APT escrow',
+        stage: 'source_escrow_creation'
+      });
+    }
+  }
+
   private async createSourceEscrowForAPT(order: Order, fill: Fill): Promise<void> {
     console.log(`   📝 Creating APT source escrow for order ${order.id}`);
     
@@ -799,7 +1116,6 @@ export class ResolverServiceV2 {
       // Since APT is a native token on Aptos, the user needs to have created the escrow
       // The resolver cannot create it on behalf of the user
       
-      // However, we can simulate the creation for demo purposes
       console.log(`   ⚠️  Note: APT escrows require user interaction on Aptos`);
       console.log(`   📋 Waiting for user to create APT escrow...`);
       
@@ -813,6 +1129,58 @@ export class ResolverServiceV2 {
     } catch (error) {
       console.error(`   ❌ Error in createSourceEscrowForAPT:`, error);
       throw error;
+    }
+  }
+  
+  private async handleAPTEscrowCreated(data: any) {
+    try {
+      const { orderId, escrowId, secretHash } = data;
+      
+      // Find the matching fill
+      let matchingFill: Fill | undefined;
+      let matchingOrder: Order | undefined;
+      
+      for (const [destEscrowId, fill] of this.monitoringFills) {
+        // Match by orderId primarily, secretHash is optional for validation
+        if (fill.orderId === orderId) {
+          // If secretHash is provided, validate it matches
+          if (secretHash && fill.secretHash !== secretHash) {
+            console.log('   ⚠️ Secret hash mismatch for order', orderId);
+            continue;
+          }
+          matchingFill = fill;
+          matchingOrder = this.activeOrders.get(orderId);
+          break;
+        }
+      }
+      
+      if (!matchingFill || !matchingOrder) {
+        console.log('   ⚠️ No matching fill found for APT escrow');
+        console.log('   Active fills:', Array.from(this.monitoringFills.values()).map(f => ({ orderId: f.orderId, id: f.id })));
+        return;
+      }
+      
+      console.log('\n💰 APT source escrow created on Aptos, both escrows now exist');
+      console.log('   📝 Storing source escrow ID:', escrowId);
+      console.log('   📝 Destination escrow ID:', matchingFill.destinationEscrowId);
+      
+      // Request secret from user now that both escrows exist
+      console.log('   🔐 Both escrows created, requesting secret from user...');
+      this.socket.emit('secret:request', {
+        orderId: matchingOrder.id,
+        message: 'Both escrows confirmed on-chain. Please reveal your secret to complete the swap.'
+      });
+      
+      // Store pending swap info for when secret is revealed
+      this.pendingSecretReveals.set(matchingOrder.id, {
+        order: matchingOrder,
+        fill: matchingFill,
+        sourceEscrowId: escrowId,
+        destinationEscrowId: matchingFill.destinationEscrowId!
+      });
+      
+    } catch (error) {
+      console.error('Failed to handle APT escrow:', error);
     }
   }
 
