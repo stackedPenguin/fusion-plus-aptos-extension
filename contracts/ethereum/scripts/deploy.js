@@ -3,13 +3,13 @@ const hre = require("hardhat");
 async function main() {
   console.log("Deploying FusionPlusEscrow to", hre.network.name);
 
-  const FusionPlusEscrow = await hre.ethers.getContractFactory("FusionPlusEscrow");
-  const escrow = await FusionPlusEscrow.deploy();
+  const FusionPlusEscrowV2 = await hre.ethers.getContractFactory("FusionPlusEscrowV2");
+  const escrow = await FusionPlusEscrowV2.deploy();
 
-  await escrow.waitForDeployment();
+  await escrow.deployed();
 
-  const address = await escrow.getAddress();
-  console.log("FusionPlusEscrow deployed to:", address);
+  const address = escrow.address;
+  console.log("FusionPlusEscrowV2 deployed to:", address);
   
   // Verify on Etherscan (if not local network)
   if (hre.network.name !== "hardhat" && hre.network.name !== "localhost") {

@@ -391,18 +391,30 @@ export class ResolverServiceV2 {
           const sourceEscrowId = ethers.id(order.id + '-source-' + secretHash);
           
           // Create source escrow with user as depositor (Fusion+ flow)
-          const sourceTxHash = await this.chainService.createEthereumEscrow(
+          // Use createEscrowFor to pull tokens from user's wallet
+          const sourceTxHash = await this.chainService.createEthereumEscrowFor(
             sourceEscrowId,
+            order.maker, // User is the depositor
             this.ethereumAddress, // Resolver is beneficiary on source
             order.fromToken,
             order.fromAmount,
             secretHash,
-            timelock,
-            ethers.parseEther('0.001').toString(), // Safety deposit
-            order.maker // User is the depositor - escrow will pull WETH from them
+            timelock
           );
           
           console.log(`   ✅ Source escrow created automatically: ${sourceTxHash}`);
+          
+          // Emit event for source escrow creation
+          this.socket.emit('escrow:source:created', {
+            orderId: order.id,
+            escrowId: sourceEscrowId,
+            chain: 'ETHEREUM',
+            txHash: sourceTxHash,
+            amount: order.fromAmount
+          });
+          
+          // Mark this escrow as auto-created to prevent double processing
+          this.processedEvents.add(`auto-${sourceEscrowId}`);
           
           // Continue with normal flow - reveal secret and complete swap
           await this.completeSwap(order, fill, secret, sourceEscrowId, escrowId);
@@ -471,6 +483,12 @@ export class ResolverServiceV2 {
             console.log(`   Escrow ID: ${escrowId}`);
             console.log(`   From: ${depositor}`);
             console.log(`   Amount: ${ethers.formatEther(amount)} ETH`);
+            
+            // Check if this was auto-created by us
+            if (this.processedEvents.has(`auto-${escrowId}`)) {
+              console.log(`   ℹ️ Skipping auto-created escrow, already being processed`);
+              continue;
+            }
             
             // Find matching fill by hashlock
             for (const [destEscrowId, fill] of this.monitoringFills) {

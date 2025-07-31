@@ -133,6 +133,43 @@ export class ChainServiceSimple {
     return receipt.hash;
   }
 
+  async createEthereumEscrowFor(
+    escrowId: string,
+    depositor: string,
+    beneficiary: string,
+    token: string,
+    amount: string,
+    hashlock: string,
+    timelock: number
+  ): Promise<string> {
+    const escrowAbi = [
+      'function createEscrowFor(bytes32 _escrowId, address _depositor, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable'
+    ];
+    
+    const escrowContract = new ethers.Contract(
+      this.ethereum.escrowAddress, 
+      escrowAbi, 
+      this.ethereum.signer
+    );
+
+    // Calculate safety deposit (0.001 ETH)
+    const safetyDeposit = ethers.parseEther('0.001');
+
+    const tx = await escrowContract.createEscrowFor(
+      escrowId,
+      depositor,
+      beneficiary,
+      token,
+      amount,
+      hashlock,
+      timelock,
+      { value: safetyDeposit } // Safety deposit required
+    );
+
+    const receipt = await tx.wait();
+    return receipt.hash;
+  }
+
   async createAptosEscrow(
     escrowId: Uint8Array,
     beneficiary: string,

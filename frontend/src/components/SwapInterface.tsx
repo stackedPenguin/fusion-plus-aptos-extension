@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { OrderService, Chain } from '../services/OrderService';
 import { PriceService } from '../services/PriceService';
 import { WETHService } from '../services/WETHService';
+import { AssetFlowLogger } from '../services/AssetFlowLogger';
 import { CONTRACTS } from '../config/contracts';
 
 interface SwapInterfaceProps {
@@ -44,6 +45,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
   const [showTokenMenu, setShowTokenMenu] = useState(false);
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
+  const [showResolverStatus, setShowResolverStatus] = useState(false);
+  const [resolverBalances, setResolverBalances] = useState<any>(null);
 
   // Get current balances
   const currentBalances = {
@@ -66,6 +69,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     }
 
     setIsLoading(true);
+    
+    // Initialize asset flow logger
+    const logger = new AssetFlowLogger(ethSigner, ethAccount, aptosAccount);
+    
+    // Log pre-swap state asynchronously to avoid blocking
+    logger.logPreSwapState(fromAmount, selectedToken).catch(err => 
+      console.error('Failed to log pre-swap state:', err)
+    );
     
     try {
       // Check if we're swapping from Ethereum
@@ -97,23 +108,29 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       if (isEthereumSwap) {
         const wethService = new WETHService(ethSigner);
         setSwapStatus({ stage: 'approving_weth', message: 'Checking WETH approval...' });
+        await logger.logSwapStep('✅ Checking WETH approval for escrow contract');
         const escrowAllowance = await wethService.getAllowance(ethAccount, CONTRACTS.ETHEREUM.ESCROW);
         
         if (escrowAllowance < BigInt(swapAmount)) {
           setSwapStatus({ stage: 'approving_weth', message: 'Approving WETH for escrow contract...' });
+          await logger.logSwapStep('📝 Approving WETH for escrow contract', `Amount: ${ethers.formatEther(swapAmount)} WETH`);
           try {
             const approveTx = await wethService.approve(
               CONTRACTS.ETHEREUM.ESCROW, // Approve escrow contract, not resolver
               ethers.MaxUint256.toString() // Infinite approval
             );
             console.log('WETH approved for escrow contract:', approveTx);
+            await logger.logSwapStep('✅ WETH approval confirmed', `TxHash: ${approveTx}`);
           } catch (error) {
             throw new Error(`Failed to approve WETH: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
+        } else {
+          await logger.logSwapStep('✅ WETH already approved for escrow contract');
         }
       }
       
       setSwapStatus({ stage: 'submitting', message: 'Preparing order with permit...' });
+      await logger.logSwapStep('📋 Preparing swap order');
       
       const orderData = {
         fromChain,
@@ -156,6 +173,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       }
 
       setSwapStatus({ stage: 'submitting', message: 'Submitting order...' });
+      await logger.logSwapStep('🚀 Submitting order to resolver', `Order ID: ${orderData.nonce}`);
       
       // Submit the order
       const result = await orderService.createOrder(finalOrderData as any);
@@ -173,9 +191,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       }
 
       // Subscribe to order updates
-      orderService.subscribeToOrderUpdates(orderId, (update: any) => {
+      orderService.subscribeToOrderUpdates(orderId, async (update: any) => {
         console.log('Order update:', update);
         if (update.type === 'escrow:destination:created') {
+          await logger.logSwapStep('🔒 Destination escrow created on Aptos', `Resolver locked ${(parseInt(update.amount || '0') / 100000000).toFixed(4)} APT`);
           setSwapStatus({
             stage: 'escrow_created',
             message: `Resolver locked ${(parseInt(update.amount || '0') / 100000000).toFixed(4)} APT on Aptos!`,
@@ -187,8 +206,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
 
       // Also listen for general escrow events
       const socket = (orderService as any).socket;
-      socket.on('escrow:destination:created', (data: any) => {
+      socket.on('escrow:destination:created', async (data: any) => {
         if (data.orderId === orderId) {
+          await logger.logSwapStep('🔒 Destination escrow created on Aptos', `Resolver locked ${(parseInt(data.amount || '0') / 100000000).toFixed(4)} APT`);
           setSwapStatus({
             stage: 'escrow_created',
             message: `Resolver locked ${(parseInt(data.amount || '0') / 100000000).toFixed(4)} APT on Aptos!`,
@@ -197,9 +217,26 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           });
         }
       });
-
-      socket.on('swap:completed', (data: any) => {
+      
+      // Listen for source escrow creation
+      socket.on('escrow:source:created', async (data: any) => {
         if (data.orderId === orderId) {
+          await logger.logSwapStep('🔒 Source escrow created on Ethereum', `User WETH locked: ${ethers.formatEther(data.amount || '0')} WETH`);
+        }
+      });
+      
+      // Listen for source withdrawal (resolver claims WETH)
+      socket.on('escrow:source:withdrawn', async (data: any) => {
+        if (data.orderId === orderId) {
+          await logger.logSwapStep('💰 Resolver withdrew user WETH', 'Source escrow completed');
+        }
+      });
+
+      socket.on('swap:completed', async (data: any) => {
+        if (data.orderId === orderId) {
+          await logger.logSwapStep('🎉 Swap completed successfully!', `User received ${(parseFloat(data.toAmount || '0') / 100000000).toFixed(4)} APT`);
+          await logger.logPostSwapState(orderId);
+          
           setSwapStatus({
             stage: 'completed',
             message: `Swap completed successfully! You received ${(parseFloat(data.toAmount || '0') / 100000000).toFixed(4)} APT`,
@@ -225,6 +262,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       setTimeout(() => {
         orderService.unsubscribeFromOrderUpdates(orderId);
         socket.off('escrow:destination:created');
+        socket.off('escrow:source:created');
+        socket.off('escrow:source:withdrawn');
         socket.off('swap:completed');
         if (swapStatus.stage === 'waiting') {
           setSwapStatus({
@@ -274,6 +313,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         throw new Error('Wallet not connected');
       }
       
+      const logger = new AssetFlowLogger(ethSigner, ethAccount, aptosAccount);
+      await logger.logSwapStep('🔄 Wrapping ETH to WETH', `Amount: ${wrapConfirmationData.amount} ETH`);
+      
       const wethService = new WETHService(ethSigner);
       const amountToWrapWei = ethers.parseEther(wrapConfirmationData.amount).toString();
       
@@ -281,6 +323,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       
       const wrapTx = await wethService.wrapETH(amountToWrapWei);
       console.log('ETH wrapped to WETH:', wrapTx);
+      await logger.logSwapStep('✅ ETH wrapped to WETH successfully', `TxHash: ${wrapTx}`);
       
       // Update WETH balance
       const newWethBalance = await wethService.getBalance(ethAccount);
@@ -386,10 +429,31 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       if (showTokenMenu && !(e.target as HTMLElement).closest('.token-select')) {
         setShowTokenMenu(false);
       }
+      if (showResolverStatus && !(e.target as HTMLElement).closest('.resolver-status-section')) {
+        setShowResolverStatus(false);
+      }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showTokenMenu]);
+  }, [showTokenMenu, showResolverStatus]);
+
+  // Function to fetch resolver status
+  const fetchResolverStatus = async () => {
+    if (ethSigner && ethAccount) {
+      const logger = new AssetFlowLogger(ethSigner, ethAccount, aptosAccount);
+      const balances = await logger.getResolverStatus();
+      setResolverBalances(balances);
+      setShowResolverStatus(true);
+      
+      console.log('🏛️ ========== RESOLVER STATUS ==========');
+      console.log('Ethereum Resolver:', CONTRACTS.RESOLVER.ETHEREUM);
+      console.log(`  • ETH: ${balances.ethereum.eth}`);
+      console.log(`  • WETH: ${balances.ethereum.weth}`);
+      console.log('Aptos Resolver:', CONTRACTS.RESOLVER.APTOS);
+      console.log(`  • APT: ${balances.aptos.apt}`);
+      console.log('=====================================');
+    }
+  };
 
   const getButtonText = () => {
     if (swapStatus.stage === 'completed') {
@@ -426,7 +490,16 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
     <div className="swap-interface">
       <div className="swap-header">
         <h2>Swap</h2>
-        <button className="settings-button">⚙</button>
+        <div className="header-actions">
+          <button 
+            className="resolver-status-button"
+            onClick={fetchResolverStatus}
+            title="Show Resolver Wallet Status"
+          >
+            🏛️ Resolver Status
+          </button>
+          <button className="settings-button">⚙</button>
+        </div>
       </div>
       
       <div className="swap-form">
@@ -580,6 +653,46 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               <button className="confirm-button" onClick={handleWrapConfirm}>
                 Wrap ETH
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Resolver Status Display */}
+        {showResolverStatus && resolverBalances && (
+          <div className="resolver-status-section">
+            <div className="resolver-status-header">
+              <h3>🏛️ Resolver Wallet Status</h3>
+              <button 
+                className="close-button"
+                onClick={() => setShowResolverStatus(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="resolver-status-content">
+              <div className="resolver-wallet">
+                <h4>Ethereum Resolver</h4>
+                <p className="wallet-address">{CONTRACTS.RESOLVER.ETHEREUM}</p>
+                <div className="balance-row">
+                  <span>ETH:</span>
+                  <span className="balance-value">{resolverBalances.ethereum.eth}</span>
+                </div>
+                <div className="balance-row">
+                  <span>WETH:</span>
+                  <span className="balance-value">{resolverBalances.ethereum.weth}</span>
+                </div>
+              </div>
+              <div className="resolver-wallet">
+                <h4>Aptos Resolver</h4>
+                <p className="wallet-address">{CONTRACTS.RESOLVER.APTOS}</p>
+                <div className="balance-row">
+                  <span>APT:</span>
+                  <span className="balance-value">{resolverBalances.aptos.apt}</span>
+                </div>
+              </div>
+            </div>
+            <div className="resolver-status-note">
+              <p>💡 <strong>Demo Note:</strong> These are the resolver's liquidity pools. During swaps, the resolver temporarily locks destination tokens and earns source tokens as fees.</p>
             </div>
           </div>
         )}

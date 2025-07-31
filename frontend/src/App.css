@@ -190,6 +190,30 @@ body {
   align-items: center;
 }
 
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.resolver-status-button {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.resolver-status-button:hover {
+  background: var(--accent-primary);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
 .swap-header h2 {
   margin: 0;
   font-size: 18px;
@@ -961,6 +985,114 @@ body {
 
 .token-option.selected .token-balance-menu {
   color: var(--text-primary);
+}
+
+/* Resolver Status Display */
+.resolver-status-section {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 16px;
+  animation: fadeIn 0.3s ease-out;
+  position: relative;
+}
+
+.resolver-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.resolver-status-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.close-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.resolver-status-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.resolver-wallet {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.resolver-wallet h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.wallet-address {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: monospace;
+  margin: 0 0 12px 0;
+  word-break: break-all;
+}
+
+.balance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.balance-row:last-child {
+  margin-bottom: 0;
+}
+
+.balance-value {
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.resolver-status-note {
+  background: var(--bg-secondary);
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--accent-primary);
+}
+
+.resolver-status-note p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .resolver-status-content {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 /* Token Display Override */
