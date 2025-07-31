@@ -151,7 +151,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           : '0x1::aptos_coin::AptosCoin', // APT
         fromAmount: swapAmount,
         minToAmount: toChain === Chain.ETHEREUM
-          ? ethers.parseEther((parseFloat(estimatedOutput) * 0.995).toString()).toString() // 0.5% slippage
+          ? ethers.parseEther((parseFloat(estimatedOutput) * 0.995).toFixed(18)).toString() // 0.5% slippage, fixed to 18 decimals
           : Math.floor(parseFloat(estimatedOutput) * 1e8 * 0.995).toString(), // 0.5% slippage for resolver margin
         maker: fromChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
@@ -335,9 +335,22 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       }, 1800000); // 30 minutes
     } catch (error) {
       console.error('Failed to create order:', error);
+      let errorMessage = 'Failed to create order: ';
+      
+      if (error instanceof Error) {
+        // Handle decimal precision errors
+        if (error.message.includes('too many decimals') || error.message.includes('underflow')) {
+          errorMessage = 'Amount too small or has too many decimal places. Please try a different amount.';
+        } else {
+          errorMessage += error.message;
+        }
+      } else {
+        errorMessage += 'Unknown error';
+      }
+      
       setSwapStatus({ 
         stage: 'error', 
-        message: 'Failed to create order: ' + (error as Error).message 
+        message: errorMessage
       });
     } finally {
       setIsLoading(false);
@@ -447,8 +460,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       const inputValue = parseFloat(fromAmount);
       if (!isNaN(inputValue) && inputValue > 0) {
         const estimated = inputValue * exchangeRate * 0.99; // 1% resolver fee
-        // For APT, use 8 decimal precision to match backend
-        const precision = toChain === Chain.APTOS ? 8 : 6;
+        // Use appropriate decimal precision for each chain
+        const precision = toChain === Chain.APTOS ? 8 : 18; // APT has 8 decimals, ETH has 18
         setEstimatedOutput(estimated.toFixed(precision));
       } else {
         setEstimatedOutput('');
@@ -692,7 +705,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               type="number"
               className="amount-input"
               placeholder="0.0"
-              value={estimatedOutput}
+              value={estimatedOutput ? parseFloat(estimatedOutput).toFixed(toChain === Chain.ETHEREUM ? 6 : 8) : ''}
               readOnly
               onFocus={() => setFocusedInput('to')}
               onBlur={() => setFocusedInput(null)}
