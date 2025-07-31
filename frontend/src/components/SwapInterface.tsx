@@ -49,11 +49,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [selectedToken, setSelectedToken] = useState<'ETH' | 'WETH'>('ETH');
-  const [showTokenMenu, setShowTokenMenu] = useState(false);
+  const [showTokenDropdown, setShowTokenDropdown] = useState(false);
   const [wrapConfirmationData, setWrapConfirmationData] = useState<{ amount: string; isVisible: boolean }>({ amount: '0', isVisible: false });
   const [showResolverStatus, setShowResolverStatus] = useState(false);
   const [resolverBalances, setResolverBalances] = useState<any>(null);
   const [allowPartialFill, setAllowPartialFill] = useState(false);
+  const [showWrapInterface, setShowWrapInterface] = useState(false);
+  const [wrapAmount, setWrapAmount] = useState('');
+  const [isWrapping, setIsWrapping] = useState(false);
 
   // Get current balances
   const currentBalances = {
@@ -75,6 +78,13 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       return;
     }
 
+    // If ETH is selected, show the wrap interface instead of proceeding with swap
+    if (fromChain === Chain.ETHEREUM && selectedToken === 'ETH') {
+      setWrapAmount(fromAmount);
+      setShowWrapInterface(true);
+      return;
+    }
+
     setIsLoading(true);
     
     // Initialize asset flow logger
@@ -90,26 +100,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       const isEthereumSwap = fromChain === Chain.ETHEREUM;
       const swapAmount = isEthereumSwap ? ethers.parseEther(fromAmount).toString() : (parseFloat(fromAmount) * 1e8).toString();
       
-      // Step 1: If swapping ETH (not WETH), wrap to WETH first
-      if (isEthereumSwap && selectedToken === 'ETH') {
-        const wethService = new WETHService(ethSigner);
-        
-        // Check user's current WETH balance
-        const currentWethBalance = await wethService.getBalance(ethAccount);
-        console.log('Current WETH balance:', ethers.formatEther(currentWethBalance));
-        
-        // Check if user needs to wrap more ETH
-        const needsWrapping = BigInt(currentWethBalance) < BigInt(swapAmount);
-        
-        if (needsWrapping) {
-          const amountToWrap = BigInt(swapAmount) - BigInt(currentWethBalance);
-          setWrapConfirmationData({ amount: ethers.formatEther(amountToWrap), isVisible: true });
-          setIsLoading(false);
-          return;
-        } else {
-          console.log('User already has enough WETH, skipping wrap step');
-        }
-      }
+      // We should only reach here if WETH is selected
       
       // Step 2: If using WETH, check and handle approval for the Escrow contract
       if (isEthereumSwap) {
@@ -239,6 +230,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       socket.on('escrow:source:created', async (data: any) => {
         if (data.orderId === orderId) {
           await logger.logSwapStep('🔒 Source escrow created on Ethereum', `User WETH locked: ${ethers.formatEther(data.amount || '0')} WETH`);
+          // Force immediate balance refresh when source escrow is created
+          fetchWethBalance();
+          setTimeout(() => fetchWethBalance(), 1000);
+          setTimeout(() => fetchWethBalance(), 3000);
         }
       });
       
@@ -246,6 +241,15 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       socket.on('escrow:source:withdrawn', async (data: any) => {
         if (data.orderId === orderId) {
           await logger.logSwapStep('💰 Resolver withdrew user WETH', 'Source escrow completed');
+          // Force balance refresh after withdrawal
+          fetchWethBalance();
+          window.dispatchEvent(new Event('refreshBalances'));
+          // Multiple attempts to ensure balance is updated
+          setTimeout(() => {
+            fetchWethBalance();
+            window.dispatchEvent(new Event('refreshBalances'));
+          }, 1500);
+          setTimeout(() => fetchWethBalance(), 5000);
         }
       });
 
@@ -270,6 +274,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             orderId
           });
           
+          // Reset loading state when swap completes
+          setIsLoading(false);
+          
           // Update both WETH and APT balances after successful swap
           if (fromChain === Chain.ETHEREUM) {
             // Immediate update
@@ -282,6 +289,23 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           // Trigger parent component to refresh APT balance
           window.dispatchEvent(new Event('refreshBalances'));
           setTimeout(() => window.dispatchEvent(new Event('refreshBalances')), 5000);
+        }
+      });
+      
+      // Listen for manual withdrawal required event
+      socket.on('swap:manual_withdrawal_required', async (data: any) => {
+        if (data.orderId === orderId) {
+          await logger.logSwapStep('⚠️ Manual withdrawal required', `Reason: ${data.reason}`);
+          console.log('🔑 Secret for manual withdrawal:', data.secret);
+          
+          setSwapStatus({
+            stage: 'error',
+            message: `⚠️ ${data.reason}. The resolver revealed the secret but couldn't complete the withdrawal. You can manually withdraw ${(parseInt(data.amount) / 100000000).toFixed(4)} APT using the secret: ${data.secret.slice(0, 10)}...`,
+            orderId
+          });
+          
+          // Reset loading state on error
+          setIsLoading(false);
         }
       });
 
@@ -428,7 +452,11 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       try {
         const wethService = new WETHService(ethSigner);
         const balance = await wethService.getBalance(ethAccount);
-        setWethBalance(ethers.formatEther(balance));
+        const formattedBalance = ethers.formatEther(balance);
+        setWethBalance(formattedBalance);
+        
+        // Also log for debugging
+        console.log(`WETH Balance fetched: ${formattedBalance} (raw: ${balance.toString()})`);
       } catch (error) {
         console.error('Failed to fetch WETH balance:', error);
         setWethBalance('0');
@@ -453,13 +481,13 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   // Close token menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (showTokenMenu && !(e.target as HTMLElement).closest('.token-select')) {
-        setShowTokenMenu(false);
+      if (showTokenDropdown && !(e.target as HTMLElement).closest('.token-select')) {
+        setShowTokenDropdown(false);
       }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [showTokenMenu]);
+  }, [showTokenDropdown]);
 
   // Function to fetch resolver status
   const fetchResolverStatus = async () => {
@@ -516,13 +544,15 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       <div className="swap-header">
         <h2>Swap</h2>
         <div className="header-actions">
-          <button 
-            className="resolver-status-button"
-            onClick={fetchResolverStatus}
-            title="Show Resolver Wallet Status"
-          >
-            🏛️ Resolver Status
-          </button>
+          {ethAccount && aptosAccount && (
+            <button 
+              className="resolver-status-button"
+              onClick={fetchResolverStatus}
+              title="Show Resolver Wallet Status"
+            >
+              🏛️ Resolver Status
+            </button>
+          )}
         </div>
       </div>
       
@@ -548,7 +578,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             </div>
           </div>
           <div className="token-input-content">
-            <div className="token-select" onClick={() => fromChain === Chain.ETHEREUM && setShowTokenMenu(!showTokenMenu)}>
+            <div className="token-select" onClick={() => fromChain === Chain.ETHEREUM && setShowTokenDropdown(!showTokenDropdown)}>
               <img 
                 className="token-icon" 
                 src={fromChain === Chain.ETHEREUM 
@@ -563,14 +593,15 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               {fromChain === Chain.ETHEREUM && (
                 <span className="dropdown-arrow">▼</span>
               )}
-              {showTokenMenu && fromChain === Chain.ETHEREUM && (
+              {showTokenDropdown && fromChain === Chain.ETHEREUM && (
                 <div className="token-menu">
                   <div 
                     className={`token-option ${selectedToken === 'ETH' ? 'selected' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedToken('ETH');
-                      setShowTokenMenu(false);
+                      // Show wrap interface when ETH is selected
+                      setShowWrapInterface(true);
+                      setShowTokenDropdown(false);
                     }}
                   >
                     <div className="token-option-info">
@@ -583,7 +614,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedToken('WETH');
-                      setShowTokenMenu(false);
+                      setShowTokenDropdown(false);
                     }}
                   >
                     <div className="token-option-info">
@@ -823,6 +854,139 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               <div className="loading-spinner">Loading...</div>
             </div>
           )}
+        </div>
+      </div>
+    )}
+
+    {/* ETH to WETH Wrap Interface */}
+    {showWrapInterface && (
+      <div className="modal-overlay" onClick={() => setShowWrapInterface(false)}>
+        <div className="wrap-interface" onClick={(e) => e.stopPropagation()}>
+          <div className="wrap-header">
+            <button 
+              className="back-button"
+              onClick={() => setShowWrapInterface(false)}
+            >
+              ← Back
+            </button>
+            <h2>Wrap ETH</h2>
+            <div className="wrap-info">
+              <p>To continue, wrap your ETH to WETH via an on-chain ERC20 transaction.</p>
+            </div>
+          </div>
+
+          <div className="wrap-content">
+            <div className="wrap-token-row">
+              <div className="wrap-token-info">
+                <img src={TOKEN_ICONS.ETH} alt="ETH" className="wrap-token-icon" />
+                <div className="wrap-token-details">
+                  <span className="wrap-token-symbol">ETH</span>
+                  <span className="wrap-token-network">on Ethereum</span>
+                </div>
+              </div>
+              <div className="wrap-token-balance">
+                <input
+                  type="number"
+                  className="wrap-amount-input"
+                  placeholder="0.0"
+                  value={wrapAmount}
+                  onChange={(e) => setWrapAmount(e.target.value)}
+                />
+                <div className="wrap-balance-info">
+                  <span className="wrap-balance">
+                    {ethBalance}
+                    {parseFloat(ethBalance) > 0 && (
+                      <span 
+                        className="max-button" 
+                        style={{ marginLeft: '8px', cursor: 'pointer' }}
+                        onClick={() => setWrapAmount(ethBalance)}
+                      >
+                        MAX
+                      </span>
+                    )}
+                  </span>
+                  <span className="wrap-balance-usd">~${(parseFloat(ethBalance) * ethPrice).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="wrap-arrow">↓</div>
+
+            <div className="wrap-token-row">
+              <div className="wrap-token-info">
+                <img src={TOKEN_ICONS.WETH} alt="WETH" className="wrap-token-icon" />
+                <div className="wrap-token-details">
+                  <span className="wrap-token-symbol">WETH</span>
+                  <span className="wrap-token-network">on Ethereum</span>
+                </div>
+              </div>
+              <div className="wrap-token-balance">
+                <div className="wrap-output">{wrapAmount || '0.0'}</div>
+                <div className="wrap-balance-info">
+                  <span className="wrap-balance">{parseFloat(wethBalance).toFixed(6)}</span>
+                  <span className="wrap-balance-usd">~${(parseFloat(wethBalance) * ethPrice).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="wrap-fee-info">
+              <span>Network Fee</span>
+              <span className="wrap-fee">~$1.37</span>
+            </div>
+
+            <div className="wrap-notes">
+              <div className="wrap-note">
+                <span className="wrap-note-number">1</span>
+                <span>It is required to give a one-time approval of WETH via an on-chain ERC20 Approve transaction.</span>
+              </div>
+              <div className="wrap-note">
+                <span className="wrap-note-number">2</span>
+                <span>Confirm swap WETH to APT</span>
+              </div>
+            </div>
+
+            <button 
+              className="wrap-button"
+              onClick={async () => {
+                if (!wrapAmount || parseFloat(wrapAmount) <= 0) {
+                  alert('Please enter amount to wrap');
+                  return;
+                }
+                
+                setIsWrapping(true);
+                try {
+                  const wethService = new WETHService(ethSigner!);
+                  const amountWei = ethers.parseEther(wrapAmount);
+                  
+                  console.log(`Wrapping ${wrapAmount} ETH to WETH...`);
+                  const txHash = await wethService.wrapETH(amountWei.toString());
+                  console.log(`Wrap transaction: ${txHash}`);
+                  
+                  // Wait a bit and refresh balances
+                  setTimeout(() => {
+                    fetchWethBalance();
+                    window.dispatchEvent(new Event('refreshBalances'));
+                  }, 3000);
+                  
+                  // Switch to WETH and close wrap interface
+                  setSelectedToken('WETH');
+                  setFromAmount(wrapAmount);
+                  setShowWrapInterface(false);
+                  setWrapAmount('');
+                  
+                  alert(`Successfully wrapped ${wrapAmount} ETH to WETH!`);
+                } catch (error) {
+                  console.error('Failed to wrap ETH:', error);
+                  alert('Failed to wrap ETH. Please try again.');
+                } finally {
+                  setIsWrapping(false);
+                }
+              }}
+              disabled={isWrapping || !wrapAmount || parseFloat(wrapAmount) <= 0 || parseFloat(wrapAmount) > parseFloat(ethBalance)}
+            >
+              {isWrapping ? 'Wrapping...' : 'Wrap ETH to WETH'}
+            </button>
+          </div>
         </div>
       </div>
     )}

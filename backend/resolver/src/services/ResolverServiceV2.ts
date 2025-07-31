@@ -598,8 +598,24 @@ export class ResolverServiceV2 {
               secret
             );
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('   ⚠️ Failed to withdraw from Aptos escrow:', error);
+          
+          // Check if it's a gas fee issue
+          if (error.message?.includes('INSUFFICIENT_BALANCE_FOR_TRANSACTION_FEE')) {
+            console.log('   ❌ RESOLVER OUT OF GAS: The resolver does not have enough APT to pay for transaction fees.');
+            console.log('   💡 The user can still manually withdraw using the revealed secret.');
+            console.log(`   🔑 Secret: ${ethers.hexlify(secret)}`);
+            
+            // Emit event to notify user
+            this.socket.emit('swap:manual_withdrawal_required', {
+              orderId: order.id,
+              reason: 'Resolver out of APT gas',
+              secret: ethers.hexlify(secret),
+              escrowId: destEscrowId,
+              amount: fill.amount
+            });
+          }
           // Don't fail the whole operation if Aptos withdrawal fails
           // The user can still manually withdraw using the revealed secret
         }
@@ -689,8 +705,24 @@ export class ResolverServiceV2 {
               secret
             );
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('   ⚠️ Failed to withdraw from Aptos escrow:', error);
+          
+          // Check if it's a gas fee issue
+          if (error.message?.includes('INSUFFICIENT_BALANCE_FOR_TRANSACTION_FEE')) {
+            console.log('   ❌ RESOLVER OUT OF GAS: The resolver does not have enough APT to pay for transaction fees.');
+            console.log('   💡 The user can still manually withdraw using the revealed secret.');
+            console.log(`   🔑 Secret: ${ethers.hexlify(secret)}`);
+            
+            // Emit event to notify user
+            this.socket.emit('swap:manual_withdrawal_required', {
+              orderId: fill.orderId,
+              reason: 'Resolver out of APT gas',
+              secret: ethers.hexlify(secret),
+              escrowId: fill.destinationEscrowId,
+              amount: fill.amount
+            });
+          }
           // Don't fail the whole operation if Aptos withdrawal fails
           // The user can still manually withdraw using the revealed secret
         }

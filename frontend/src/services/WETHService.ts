@@ -63,10 +63,14 @@ const WETH_ABI = [
 export class WETHService {
   private contract: ethers.Contract;
   private signer: ethers.Signer;
+  private contractAddress: string;
+  private abi: any[];
 
-  constructor(signer: ethers.Signer) {
+  constructor(signer: ethers.Signer, contractAddress?: string) {
     this.signer = signer;
-    this.contract = new ethers.Contract(CONTRACTS.ETHEREUM.WETH, WETH_ABI, signer);
+    this.contractAddress = contractAddress || CONTRACTS.ETHEREUM.WETH;
+    this.abi = WETH_ABI;
+    this.contract = new ethers.Contract(this.contractAddress, this.abi, signer);
   }
 
   /**
@@ -101,7 +105,18 @@ export class WETHService {
    * Get WETH balance
    */
   async getBalance(address: string): Promise<string> {
-    return await this.contract.balanceOf(address);
+    // Force fresh data by creating a new contract instance
+    const provider = await this.signer.provider;
+    if (!provider) throw new Error('No provider available');
+    
+    // Use a static call with blockTag 'latest' to ensure fresh data
+    const freshContract = new ethers.Contract(this.contractAddress, this.abi, provider);
+    const balance = await freshContract.balanceOf(address, { blockTag: 'latest' });
+    
+    // Also log for debugging
+    console.log(`[WETHService] Fresh balance for ${address}: ${ethers.formatEther(balance)} WETH`);
+    
+    return balance;
   }
 
   /**

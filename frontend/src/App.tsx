@@ -171,7 +171,7 @@ function App() {
       <div className="app-layout">
         <div className="main-content">
           <div className="logo-section">
-            <h1>Fusion+</h1>
+            <h1>Fusion+ Aptos Extension</h1>
             <span className="beta-badge">BETA</span>
           </div>
           

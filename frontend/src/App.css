@@ -225,9 +225,10 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
   width: 100%;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 24px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  position: relative;
 }
 
 .swap-header {
@@ -1058,11 +1059,11 @@ body {
   top: 100%;
   left: 0;
   right: 0;
-  background: rgba(26, 26, 31, 0.95);
+  background: rgba(26, 26, 31, 0.98);
   backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  z-index: 10;
+  z-index: 1000;
   margin-top: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   animation: fadeIn 0.2s ease-out;
@@ -1358,6 +1359,222 @@ body {
   color: var(--accent-primary);
   font-size: 11px;
   font-weight: 500;
+}
+
+/* Wrap Interface Styles */
+.wrap-interface {
+  background: var(--bg-primary);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.wrap-header {
+  padding: 24px;
+  border-bottom: 1px solid var(--border-color);
+  position: relative;
+}
+
+.back-button {
+  position: absolute;
+  left: 24px;
+  top: 24px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  transition: background-color 0.2s;
+}
+
+.back-button:hover {
+  background: var(--bg-secondary);
+}
+
+.wrap-header h2 {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.wrap-info {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.wrap-info p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.wrap-content {
+  padding: 24px;
+}
+
+.wrap-token-row {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.wrap-token-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.wrap-token-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.wrap-token-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wrap-token-symbol {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wrap-token-network {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wrap-token-balance {
+  text-align: right;
+}
+
+.wrap-amount-input {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-primary);
+  width: 150px;
+  margin-bottom: 4px;
+}
+
+.wrap-amount-input:focus {
+  outline: none;
+}
+
+.wrap-output {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.wrap-balance-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.wrap-balance {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wrap-balance-usd {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.wrap-arrow {
+  text-align: center;
+  font-size: 20px;
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
+
+.wrap-fee-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  margin: 16px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.wrap-fee {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.wrap-notes {
+  margin: 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wrap-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-note-number {
+  background: var(--bg-tertiary);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.wrap-button {
+  width: 100%;
+  padding: 16px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.wrap-button:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.wrap-button:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 
 /* Modal Styles */
