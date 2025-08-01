@@ -8,6 +8,7 @@ import { CONTRACTS } from '../config/contracts';
 import { Serializer } from '@aptos-labs/ts-sdk';
 import { SponsoredTransactionV2 } from '../utils/sponsoredTransactionV2';
 import { walletSupportsSponsoredTransactions, detectWalletType } from '../utils/walletDetection';
+import { PermitSigner, EscrowPermitParams } from '../utils/permitSigning';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -418,22 +419,74 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 const useBackendSponsorship = walletType === 'petra' || !supportsSponsoredTx;
                 
                 if (useBackendSponsorship) {
-                  console.log('Using backend sponsorship for gasless experience');
-                  await logger.logSwapStep('✨ Gasless transaction', 'Resolver will create escrow and pay gas');
+                  console.log('Using backend sponsorship with permit pattern');
+                  await logger.logSwapStep('✨ Gasless transaction', 'Please sign permit for APT withdrawal');
                   await logger.logSwapStep('💰 Your APT will be used', 'Resolver only pays network fees');
                   
-                  socket.emit('order:signed', {
-                    orderId: data.orderId,
-                    orderMessage: signedIntent.orderMessage,
-                    signature: signedIntent.signature,
-                    publicKey: signedIntent.publicKey,
-                    fullMessage: signedIntent.fullMessage,
-                    fromChain: 'APTOS',
-                    toChain: 'ETHEREUM',
-                    fromAmount: currentOrderData.fromAmount,
-                    toAmount: currentOrderData.minToAmount,
-                    secretHash: userSecretHash
-                  });
+                  try {
+                    // Generate permit parameters
+                    const permitParams: EscrowPermitParams = {
+                      escrowId: signedIntent.orderMessage.escrow_id,
+                      amount: currentOrderData.fromAmount,
+                      beneficiary: CONTRACTS.RESOLVER.APTOS,
+                      hashlock: signedIntent.orderMessage.hashlock,
+                      timelock: signedIntent.orderMessage.timelock.toString(),
+                      nonce: Date.now().toString(),
+                      expiry: (Math.floor(Date.now() / 1000) + 300).toString() // 5 minutes
+                    };
+                    
+                    // Generate permit message
+                    const permitMessage = PermitSigner.generatePermitMessage(permitParams);
+                    console.log('Permit message:', permitMessage);
+                    
+                    // Request user to sign permit
+                    await logger.logSwapStep('🔐 Sign permit', 'Authorizing APT withdrawal');
+                    const permitSignature = await PermitSigner.signPermitWithWallet(
+                      permitMessage,
+                      (window as any).aptos || (window as any)[walletType?.toLowerCase() || 'aptos']
+                    );
+                    
+                    console.log('Permit signed:', permitSignature);
+                    await logger.logSwapStep('✅ Permit signed', 'Sending to resolver');
+                    
+                    // Create permit object
+                    const permit = PermitSigner.createPermitObject(
+                      permitParams,
+                      permitSignature.signature,
+                      permitSignature.publicKey
+                    );
+                    
+                    socket.emit('order:signed:with:permit', {
+                      orderId: data.orderId,
+                      orderMessage: signedIntent.orderMessage,
+                      signature: signedIntent.signature,
+                      publicKey: signedIntent.publicKey,
+                      fullMessage: signedIntent.fullMessage,
+                      fromChain: 'APTOS',
+                      toChain: 'ETHEREUM',
+                      fromAmount: currentOrderData.fromAmount,
+                      toAmount: currentOrderData.minToAmount,
+                      secretHash: userSecretHash,
+                      permit // Include permit for proper user fund withdrawal
+                    });
+                  } catch (permitError: any) {
+                    console.error('Failed to sign permit:', permitError);
+                    await logger.logSwapStep('⚠️ Permit signing failed', 'Falling back to resolver funds');
+                    
+                    // Fallback to current method (resolver funds - NOT SAFE FOR PRODUCTION)
+                    socket.emit('order:signed', {
+                      orderId: data.orderId,
+                      orderMessage: signedIntent.orderMessage,
+                      signature: signedIntent.signature,
+                      publicKey: signedIntent.publicKey,
+                      fullMessage: signedIntent.fullMessage,
+                      fromChain: 'APTOS',
+                      toChain: 'ETHEREUM',
+                      fromAmount: currentOrderData.fromAmount,
+                      toAmount: currentOrderData.minToAmount,
+                      secretHash: userSecretHash
+                    });
+                  }
                 } else if (supportsSponsoredTx) {
                   try {
                     await logger.logSwapStep('💰 Preparing to use YOUR APT', 'Resolver will only pay gas fees');

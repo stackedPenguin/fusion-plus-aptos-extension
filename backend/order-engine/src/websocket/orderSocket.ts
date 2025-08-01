@@ -125,6 +125,15 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
         io.to(`order:${data.orderId}`).emit('order:signed:sponsored:v2', data);
       }
     });
+
+    // Relay permit-based order (user funds with permit signature)
+    socket.on('order:signed:with:permit', (data: any) => {
+      console.log('Relaying order:signed:with:permit event:', data);
+      io.emit('order:signed:with:permit', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:signed:with:permit', data);
+      }
+    });
     
     // Relay secret request/reveal events for Fusion+ protocol
     socket.on('secret:request', (data: any) => {
