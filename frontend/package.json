@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@aptos-labs/wallet-adapter-react": "^2.1.0",
+    "@martianwallet/aptos-wallet-adapter": "^0.0.5",
     "@msafe/aptos-wallet-adapter": "^1.1.8",
     "@pontem/wallet-adapter-plugin": "^0.2.1",
     "@rise-wallet/wallet-adapter": "^0.1.2",

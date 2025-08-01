@@ -7,7 +7,7 @@ import { PermitService } from './PermitService';
 import { WETHService } from './WETHService';
 import dotenv from 'dotenv';
 import { createHash, randomBytes } from 'crypto';
-import { Deserializer, SimpleTransaction } from '@aptos-labs/ts-sdk';
+import { Deserializer, SimpleTransaction, RawTransaction, AccountAuthenticator } from '@aptos-labs/ts-sdk';
 
 dotenv.config();
 
@@ -162,6 +162,21 @@ export class ResolverServiceV2 {
         await this.handlePermitBasedAptosOrder(data);
       } else {
         // Fallback to regular signed order if no permit
+        await this.handleSignedAptosOrder(data);
+      }
+    });
+    
+    // Listen for multi-agent orders (user pays APT, resolver pays gas)
+    this.socket.on('order:signed:multiagent', async (data: any) => {
+      console.log('\n🚀 Received order:signed:multiagent event (true gasless user-funded)');
+      console.log('   From chain:', data.fromChain);
+      console.log('   Order ID:', data.orderId);
+      console.log('   Has multi-agent transaction:', !!data.multiAgentTransaction);
+      
+      if (data.fromChain === 'APTOS' && data.multiAgentTransaction) {
+        await this.handleMultiAgentAptosOrder(data);
+      } else {
+        // Fallback to regular signed order if no multi-agent data
         await this.handleSignedAptosOrder(data);
       }
     });
@@ -1457,7 +1472,7 @@ export class ResolverServiceV2 {
     console.log('   ⛽ Resolver only pays gas fees');
     
     try {
-      const { orderId, orderMessage, signature, publicKey, permit } = signedOrder;
+      const { orderId, permit } = signedOrder;
       
       // Get order from monitoring
       const order = this.activeOrders.get(orderId);
@@ -1487,6 +1502,91 @@ export class ResolverServiceV2 {
       this.socket.emit('order:error', {
         orderId: signedOrder.orderId,
         error: 'Failed to create APT escrow with permit',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  private async handleMultiAgentAptosOrder(signedOrder: any): Promise<void> {
+    console.log('\n🚀 Processing multi-agent Aptos order (TRUE gasless user-funded)');
+    console.log('   💰 User\'s APT will be withdrawn from their account');
+    console.log('   ⛽ Resolver only pays gas fees');
+    
+    try {
+      const { orderId, multiAgentTransaction } = signedOrder;
+      
+      // Get order from monitoring
+      const order = this.activeOrders.get(orderId);
+      if (!order) {
+        console.log('   ❌ Order not found');
+        return;
+      }
+      
+      console.log('   📋 Multi-agent transaction details:');
+      console.log('      - Transaction bytes:', multiAgentTransaction.transactionBytes.substring(0, 20) + '...');
+      console.log('      - User signature bytes:', multiAgentTransaction.userSignatureBytes.substring(0, 20) + '...');
+      
+      // Deserialize the transaction and user signature
+      const deserializer = new Deserializer(Buffer.from(multiAgentTransaction.transactionBytes, 'hex'));
+      const rawTxn = deserializer.deserialize(RawTransaction);
+      
+      const userSigDeserializer = new Deserializer(Buffer.from(multiAgentTransaction.userSignatureBytes, 'hex'));
+      const userSignature = userSigDeserializer.deserialize(AccountAuthenticator);
+      
+      // Sign as fee payer
+      console.log('   🔏 Signing as fee payer...');
+      const resolverAccount = this.chainService.getAptosAccount();
+      const feePayerSignature = resolverAccount.signAsFeePayer(rawTxn);
+      
+      // Submit multi-agent transaction
+      console.log('   📤 Submitting multi-agent transaction...');
+      const result = await this.chainService.submitMultiAgentTransaction(
+        rawTxn,
+        userSignature,
+        feePayerSignature
+      );
+      
+      console.log('   ✅ Multi-agent transaction submitted:', result.hash);
+      console.log('   💳 User\'s APT has been used for escrow');
+      console.log('   ⛽ Resolver paid only gas fees');
+      
+      // Emit success event
+      this.socket.emit('escrow:source:created', {
+        orderId: order.id,
+        escrowId: signedOrder.orderMessage.escrow_id,
+        transactionHash: result.hash,
+        userFunded: true,
+        gaslessForUser: true
+      });
+      
+      // Continue with the swap flow
+      const fill: Fill = {
+        id: `${order.id}-resolver`,
+        orderId: order.id,
+        resolver: this.aptosAddress,
+        amount: order.fromAmount,
+        secretHash: order.secretHash || '',
+        secretIndex: 0,
+        status: 'PENDING',
+        sourceEscrowId: signedOrder.orderMessage.escrow_id
+      };
+      
+      // Mark the escrow as created (user-funded)
+      this.pendingSecretReveals.set(order.id, {
+        order,
+        fill,
+        sourceEscrowId: signedOrder.orderMessage.escrow_id,
+        destinationEscrowId: '' // Will be set when destination escrow is created
+      });
+      
+      // Create destination escrow
+      await this.createDestinationEscrow(order);
+      
+    } catch (error) {
+      console.error('Failed to handle multi-agent order:', error);
+      this.socket.emit('order:error', {
+        orderId: signedOrder.orderId,
+        error: 'Failed to create multi-agent APT escrow',
         details: error instanceof Error ? error.message : 'Unknown error'
       });
     }

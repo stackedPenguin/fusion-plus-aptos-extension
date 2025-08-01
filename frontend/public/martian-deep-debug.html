@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Martian Deep Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { margin: 5px; padding: 10px 15px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+        .error { color: red; }
+        .success { color: green; }
+        .warning { color: orange; }
+    </style>
+</head>
+<body>
+    <h1>Martian Wallet Deep Debugging</h1>
+    
+    <div class="section">
+        <h2>1. Wallet Detection</h2>
+        <button onclick="checkWallet()">Check Wallet Object</button>
+        <pre id="wallet-info"></pre>
+    </div>
+    
+    <div class="section">
+        <h2>2. Connection Test</h2>
+        <button onclick="testConnection()">Test Connection</button>
+        <pre id="connection-info"></pre>
+    </div>
+    
+    <div class="section">
+        <h2>3. Method Tests</h2>
+        <button onclick="testMethods()">Test All Methods</button>
+        <pre id="method-info"></pre>
+    </div>
+    
+    <div class="section">
+        <h2>4. Transaction Tests</h2>
+        <button onclick="testTransactions()">Test Transactions</button>
+        <pre id="transaction-info"></pre>
+    </div>
+    
+    <div class="section">
+        <h2>5. Module Check</h2>
+        <button onclick="checkModule()">Check Escrow Module</button>
+        <pre id="module-info"></pre>
+    </div>
+
+    <script>
+        let connectedAccount = null;
+        
+        function log(elementId, message, type = '') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : '';
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+        }
+        
+        async function checkWallet() {
+            const info = document.getElementById('wallet-info');
+            info.innerHTML = '';
+            
+            log('wallet-info', 'Checking window.martian...');
+            if (window.martian) {
+                log('wallet-info', '✅ window.martian exists', 'success');
+                log('wallet-info', 'Type: ' + typeof window.martian);
+                log('wallet-info', 'Properties: ' + JSON.stringify(Object.keys(window.martian), null, 2));
+                
+                // Check each property
+                for (const key of Object.keys(window.martian)) {
+                    const value = window.martian[key];
+                    log('wallet-info', `  ${key}: ${typeof value} ${typeof value === 'function' ? '(function)' : ''}`);
+                }
+                
+                // Check for Aptos-specific methods
+                log('wallet-info', '\nChecking for Aptos methods:');
+                const aptosMethods = ['connect', 'disconnect', 'account', 'network', 'signAndSubmitTransaction', 'generateSignAndSubmitTransaction', 'generateTransaction'];
+                for (const method of aptosMethods) {
+                    if (window.martian[method]) {
+                        log('wallet-info', `  ✅ ${method}`, 'success');
+                    } else {
+                        log('wallet-info', `  ❌ ${method}`, 'error');
+                    }
+                }
+            } else {
+                log('wallet-info', '❌ window.martian not found', 'error');
+            }
+            
+            // Also check window.aptos
+            log('wallet-info', '\nChecking window.aptos...');
+            if (window.aptos) {
+                log('wallet-info', '✅ window.aptos exists', 'success');
+                log('wallet-info', 'Properties: ' + JSON.stringify(Object.keys(window.aptos), null, 2));
+            } else {
+                log('wallet-info', '❌ window.aptos not found', 'error');
+            }
+        }
+        
+        async function testConnection() {
+            const info = document.getElementById('connection-info');
+            info.innerHTML = '';
+            
+            if (!window.martian) {
+                log('connection-info', '❌ Martian not found', 'error');
+                return;
+            }
+            
+            try {
+                log('connection-info', 'Attempting connection...');
+                const response = await window.martian.connect();
+                log('connection-info', '✅ Connected!', 'success');
+                log('connection-info', 'Response: ' + JSON.stringify(response, null, 2));
+                
+                connectedAccount = response.address || response;
+                log('connection-info', 'Account: ' + connectedAccount, 'success');
+                
+                // Try to get account details
+                if (window.martian.account) {
+                    try {
+                        const accountDetails = await window.martian.account();
+                        log('connection-info', 'Account details: ' + JSON.stringify(accountDetails, null, 2));
+                    } catch (e) {
+                        log('connection-info', 'Failed to get account details: ' + e.message, 'error');
+                    }
+                }
+            } catch (error) {
+                log('connection-info', '❌ Connection failed: ' + error.message, 'error');
+                log('connection-info', 'Error: ' + JSON.stringify(error, null, 2), 'error');
+            }
+        }
+        
+        async function testMethods() {
+            const info = document.getElementById('method-info');
+            info.innerHTML = '';
+            
+            if (!window.martian || !connectedAccount) {
+                log('method-info', '❌ Please connect first', 'error');
+                return;
+            }
+            
+            // Test network method
+            log('method-info', 'Testing network()...');
+            try {
+                const network = await window.martian.network();
+                log('method-info', 'Network: ' + JSON.stringify(network, null, 2), 'success');
+            } catch (e) {
+                log('method-info', 'Network failed: ' + e.message, 'error');
+            }
+            
+            // Test signMessage if available
+            if (window.martian.signMessage) {
+                log('method-info', '\nTesting signMessage()...');
+                try {
+                    const message = 'Test message';
+                    const signature = await window.martian.signMessage({ message });
+                    log('method-info', 'Message signed successfully', 'success');
+                } catch (e) {
+                    log('method-info', 'signMessage failed: ' + e.message, 'error');
+                }
+            }
+            
+            // Check for transaction methods
+            log('method-info', '\nChecking transaction methods:');
+            const txMethods = ['generateTransaction', 'signTransaction', 'submitTransaction', 'signAndSubmitTransaction', 'generateSignAndSubmitTransaction'];
+            for (const method of txMethods) {
+                if (window.martian[method]) {
+                    log('method-info', `✅ ${method} exists`, 'success');
+                } else {
+                    log('method-info', `❌ ${method} not found`, 'error');
+                }
+            }
+        }
+        
+        async function testTransactions() {
+            const info = document.getElementById('transaction-info');
+            info.innerHTML = '';
+            
+            if (!window.martian || !connectedAccount) {
+                log('transaction-info', '❌ Please connect first', 'error');
+                return;
+            }
+            
+            // Test 1: Simplest self-transfer
+            log('transaction-info', '=== Test 1: Self transfer (1 octa) ===');
+            const test1 = {
+                function: "0x1::aptos_account::transfer",
+                type_arguments: [],
+                arguments: [connectedAccount, "1"]
+            };
+            await tryTransaction('transaction-info', 'Test 1', test1);
+            
+            // Test 2: With type field
+            log('transaction-info', '\n=== Test 2: With type field ===');
+            const test2 = {
+                type: "entry_function_payload",
+                function: "0x1::aptos_account::transfer",
+                type_arguments: [],
+                arguments: [connectedAccount, "1"]
+            };
+            await tryTransaction('transaction-info', 'Test 2', test2);
+            
+            // Test 3: Coin transfer
+            log('transaction-info', '\n=== Test 3: Coin transfer ===');
+            const test3 = {
+                function: "0x1::coin::transfer",
+                type_arguments: ["0x1::aptos_coin::AptosCoin"],
+                arguments: [connectedAccount, "1"]
+            };
+            await tryTransaction('transaction-info', 'Test 3', test3);
+            
+            // Test 4: Escrow with different formats
+            log('transaction-info', '\n=== Test 4: Escrow Tests ===');
+            
+            // Generate test data
+            const escrowId = new Uint8Array(32);
+            const hashlock = new Uint8Array(32);
+            crypto.getRandomValues(escrowId);
+            crypto.getRandomValues(hashlock);
+            
+            // Test 4a: Hex strings
+            const toHex = (arr) => '0x' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+            const test4a = {
+                type: "entry_function_payload",
+                function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                type_arguments: [],
+                arguments: [
+                    toHex(escrowId),
+                    "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532",
+                    "50000000",
+                    toHex(hashlock),
+                    Math.floor(Date.now() / 1000 + 3600).toString(),
+                    "100000"
+                ]
+            };
+            await tryTransaction('transaction-info', 'Test 4a (hex)', test4a);
+            
+            // Test 4b: Arrays
+            const test4b = {
+                type: "entry_function_payload",
+                function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                type_arguments: [],
+                arguments: [
+                    Array.from(escrowId),
+                    "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532",
+                    "50000000",
+                    Array.from(hashlock),
+                    Math.floor(Date.now() / 1000 + 3600).toString(),
+                    "100000"
+                ]
+            };
+            await tryTransaction('transaction-info', 'Test 4b (arrays)', test4b);
+        }
+        
+        async function tryTransaction(logId, name, payload) {
+            log(logId, `\nTrying ${name}...`);
+            log(logId, 'Payload: ' + JSON.stringify(payload, null, 2));
+            
+            try {
+                // First try generateSignAndSubmitTransaction
+                if (window.martian.generateSignAndSubmitTransaction) {
+                    const tx = await window.martian.generateSignAndSubmitTransaction(connectedAccount, payload);
+                    log(logId, `✅ ${name} succeeded! Tx: ${tx}`, 'success');
+                    return true;
+                }
+                
+                // Fallback to two-step
+                if (window.martian.generateTransaction && window.martian.signAndSubmitTransaction) {
+                    const rawTx = await window.martian.generateTransaction(connectedAccount, payload);
+                    const tx = await window.martian.signAndSubmitTransaction(rawTx);
+                    log(logId, `✅ ${name} succeeded (two-step)! Tx: ${tx}`, 'success');
+                    return true;
+                }
+                
+                log(logId, `❌ No suitable transaction method found`, 'error');
+            } catch (error) {
+                log(logId, `❌ ${name} failed: ${error.message || error}`, 'error');
+                if (error.code) log(logId, `Error code: ${error.code}`, 'error');
+                return false;
+            }
+        }
+        
+        async function checkModule() {
+            const info = document.getElementById('module-info');
+            info.innerHTML = '';
+            
+            const moduleAddr = '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca';
+            
+            // Check both networks
+            const networks = [
+                { name: 'Testnet', url: 'https://fullnode.testnet.aptoslabs.com' },
+                { name: 'Mainnet', url: 'https://fullnode.mainnet.aptoslabs.com' }
+            ];
+            
+            for (const network of networks) {
+                log('module-info', `\nChecking ${network.name}...`);
+                try {
+                    const response = await fetch(`${network.url}/v1/accounts/${moduleAddr}/modules`);
+                    if (response.ok) {
+                        const modules = await response.json();
+                        if (modules.length > 0) {
+                            log('module-info', `✅ Found ${modules.length} modules on ${network.name}`, 'success');
+                            
+                            const escrowModule = modules.find(m => m.abi?.name === 'escrow' || m.abi?.name === 'fusion_plus_escrow');
+                            if (escrowModule) {
+                                log('module-info', `✅ Found escrow module: ${escrowModule.abi.name}`, 'success');
+                                
+                                const createEscrow = escrowModule.abi.exposed_functions.find(f => f.name === 'create_escrow');
+                                if (createEscrow) {
+                                    log('module-info', 'create_escrow function:', 'success');
+                                    log('module-info', '  Parameters: ' + JSON.stringify(createEscrow.params));
+                                    log('module-info', '  Is entry: ' + createEscrow.is_entry);
+                                    log('module-info', '  Generic type params: ' + JSON.stringify(createEscrow.generic_type_params));
+                                }
+                            }
+                        } else {
+                            log('module-info', `❌ No modules found on ${network.name}`, 'error');
+                        }
+                    } else {
+                        log('module-info', `❌ Failed to fetch from ${network.name}: ${response.status}`, 'error');
+                    }
+                } catch (e) {
+                    log('module-info', `❌ Error checking ${network.name}: ${e.message}`, 'error');
+                }
+            }
+        }
+    </script>
+</body>
+</html>

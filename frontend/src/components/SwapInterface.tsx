@@ -10,6 +10,13 @@ import { SponsoredTransactionV2 } from '../utils/sponsoredTransactionV2';
 import { walletSupportsSponsoredTransactions, detectWalletType } from '../utils/walletDetection';
 import { PermitSigner, EscrowPermitParams } from '../utils/permitSigning';
 
+// Helper function to convert Uint8Array to hex string (browser-compatible)
+function toHex(uint8array: Uint8Array): string {
+  return Array.from(uint8array)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 interface SwapInterfaceProps {
   ethAccount: string | null;
   aptosAccount: string | null;
@@ -218,7 +225,19 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         
         try {
           // Get account info for public key
-          const accountInfo = await (window as any).aptos.account();
+          let accountInfo;
+          
+          // Check if using Martian direct connection
+          if ((window as any).__martianConnected && (window as any).__martianAccount) {
+            accountInfo = (window as any).__martianAccount;
+            console.log('Using Martian direct connection account:', accountInfo);
+          } else if ((window as any).aptos?.account) {
+            accountInfo = await (window as any).aptos.account();
+            console.log('Using wallet adapter account:', accountInfo);
+          } else {
+            throw new Error('No wallet account available');
+          }
+          
           console.log('Account info:', accountInfo);
           
           // Serialize the order message using BCS for signature
@@ -257,10 +276,25 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           // For now, we'll use signMessage but we need to handle the prefix in the contract
           // The wallet adds "APTOS\nmessage: " prefix and signs message as text
           // TODO: Consider using signTransaction for raw bytes signing
-          const signatureResponse = await (window as any).aptos.signMessage({
-            message: readableMessage,  // Sign human-readable message for now
-            nonce: nonce.toString()
-          });
+          
+          let signatureResponse;
+          
+          // Check if using Martian direct connection
+          if ((window as any).__martianConnected && (window as any).martian) {
+            console.log('Signing with Martian wallet directly');
+            signatureResponse = await (window as any).martian.signMessage({
+              message: readableMessage,
+              nonce: nonce.toString()
+            });
+          } else if ((window as any).aptos?.signMessage) {
+            console.log('Signing with wallet adapter');
+            signatureResponse = await (window as any).aptos.signMessage({
+              message: readableMessage,
+              nonce: nonce.toString()
+            });
+          } else {
+            throw new Error('No wallet available for signing');
+          }
           
           console.log('✅ Intent signed!', signatureResponse);
           
@@ -414,9 +448,11 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 
                 console.log(`Detected wallet: ${walletType}, supports sponsored tx: ${supportsSponsoredTx}`);
                 
+                // For Martian, use multi-agent transactions
+                const useMultiAgent = walletType === 'martian';
                 // For Petra and other wallets that don't support sponsored transactions,
                 // use backend sponsorship where resolver creates escrow and pays gas
-                const useBackendSponsorship = walletType === 'petra' || !supportsSponsoredTx;
+                const useBackendSponsorship = walletType === 'petra' || (!supportsSponsoredTx && !useMultiAgent);
                 
                 if (useBackendSponsorship) {
                   console.log('Using backend sponsorship with permit pattern');
@@ -487,6 +523,111 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                       secretHash: userSecretHash
                     });
                   }
+                } else if (useMultiAgent && walletType === 'martian') {
+                  // Multi-agent transaction flow for Martian wallet
+                  try {
+                    console.log('Using multi-agent transaction with Martian wallet');
+                    await logger.logSwapStep('🚀 Multi-agent transaction', 'Your APT will be used, resolver pays gas');
+                    
+                    // For Martian, let's use a simpler approach - have user create the escrow directly
+                    // This will use their APT and they'll pay gas, but at least their APT is used
+                    const { MartianTransactionBuilder } = await import('../utils/martianTransactionBuilder');
+                    
+                    const escrowParams = {
+                      sender: currentOrderData.maker,
+                      escrowModule: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2',
+                      escrowId: signedIntent.orderMessage.escrow_id,
+                      beneficiary: CONTRACTS.RESOLVER.APTOS,
+                      amount: currentOrderData.fromAmount,
+                      hashlock: signedIntent.orderMessage.hashlock,
+                      timelock: signedIntent.orderMessage.timelock,
+                      safetyDeposit: '100000', // 0.001 APT
+                      resolverAddress: CONTRACTS.RESOLVER.APTOS
+                    };
+                    
+                    // Build transaction in Martian format
+                    const payload = MartianTransactionBuilder.buildMultiAgentTransaction(escrowParams);
+                    console.log('Martian transaction payload:', payload);
+                    
+                    // Log argument types for debugging
+                    console.log('Argument types:');
+                    payload.arguments.forEach((arg: any, index: number) => {
+                      console.log(`  [${index}] ${typeof arg}:`, arg);
+                    });
+                    
+                    // Have user sign and submit the transaction
+                    console.log('Requesting Martian wallet to sign and submit transaction');
+                    await logger.logSwapStep('🔐 Sign transaction', 'Create escrow with your APT');
+                    
+                    // Sign and submit with Martian
+                    console.log('Submitting transaction to Martian wallet...');
+                    
+                    // Check if we need to reconnect
+                    if (!(window as any).martian) {
+                      throw new Error('Martian wallet not found');
+                    }
+                    
+                    // Use generateSignAndSubmitTransaction which combines both steps
+                    console.log('Using generateSignAndSubmitTransaction with:', {
+                      sender: currentOrderData.maker,
+                      payload: payload
+                    });
+                    
+                    const txResponse = await (window as any).martian.generateSignAndSubmitTransaction(
+                      currentOrderData.maker,
+                      payload
+                    );
+                    console.log('Martian transaction response:', txResponse);
+                    
+                    // Extract transaction hash from response
+                    const txHash = txResponse.hash || txResponse.txHash || txResponse;
+                    console.log('Transaction hash:', txHash);
+                    
+                    console.log('Transaction submitted:', txHash);
+                    await logger.logSwapStep('✅ Escrow created', `Transaction: ${txHash}`);
+                    
+                    // Emit escrow created event
+                    socket.emit('escrow:source:created', {
+                      orderId: data.orderId,
+                      escrowId: toHex(new Uint8Array(signedIntent.orderMessage.escrow_id)),
+                      transactionHash: txHash,
+                      userFunded: true,
+                      gaslessForUser: false // User paid gas with Martian
+                    });
+                    
+                    socket.emit('order:signed', {
+                      orderId: data.orderId,
+                      orderMessage: signedIntent.orderMessage,
+                      signature: signedIntent.signature,
+                      publicKey: signedIntent.publicKey,
+                      fullMessage: signedIntent.fullMessage,
+                      fromChain: 'APTOS',
+                      toChain: 'ETHEREUM',
+                      fromAmount: currentOrderData.fromAmount,
+                      toAmount: currentOrderData.minToAmount,
+                      secretHash: userSecretHash
+                    });
+                    
+                    await logger.logSwapStep('✅ Transaction signed', 'Your APT used for escrow');
+                    
+                  } catch (multiAgentError: any) {
+                    console.error('Failed to create multi-agent transaction:', multiAgentError);
+                    await logger.logSwapStep('⚠️ Multi-agent transaction failed', 'Falling back to standard flow');
+                    
+                    // Fallback to standard flow
+                    socket.emit('order:signed', {
+                      orderId: data.orderId,
+                      orderMessage: signedIntent.orderMessage,
+                      signature: signedIntent.signature,
+                      publicKey: signedIntent.publicKey,
+                      fullMessage: signedIntent.fullMessage,
+                      fromChain: 'APTOS',
+                      toChain: 'ETHEREUM',
+                      fromAmount: currentOrderData.fromAmount,
+                      toAmount: currentOrderData.minToAmount,
+                      secretHash: userSecretHash
+                    });
+                  }
                 } else if (supportsSponsoredTx) {
                   try {
                     await logger.logSwapStep('💰 Preparing to use YOUR APT', 'Resolver will only pay gas fees');
@@ -526,8 +667,8 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                     secretHash: userSecretHash,
                     // Sponsored transaction data
                     sponsoredTransaction: {
-                      transactionBytes: Buffer.from(transaction.bcsToBytes()).toString('hex'),
-                      userAuthenticatorBytes: Buffer.from(signResult.bcsToBytes()).toString('hex')
+                      transactionBytes: toHex(new Uint8Array(transaction.bcsToBytes())),
+                      userAuthenticatorBytes: toHex(new Uint8Array(signResult.bcsToBytes()))
                     }
                   });
                   

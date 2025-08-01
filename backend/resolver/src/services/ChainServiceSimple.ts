@@ -56,6 +56,18 @@ export class ChainServiceSimple {
       this.ethereum.signer
     );
 
+    // Log the address that will be paying for gas
+    const signerAddress = await this.ethereum.signer.getAddress();
+    const signerBalance = await this.ethereum.provider.getBalance(signerAddress);
+    console.log(`\n💳 Escrow creation - Gas payer details:`);
+    console.log(`   Address: ${signerAddress}`);
+    console.log(`   Balance: ${ethers.formatEther(signerBalance)} ETH`);
+    console.log(`   Safety deposit: ${ethers.formatEther(safetyDeposit)} ETH`);
+    console.log(`   Token: ${token}`);
+    console.log(`   Amount: ${token === ethers.ZeroAddress ? ethers.formatEther(amount) : amount}`);
+    console.log(`   Depositor: ${depositor || 'N/A'}`);
+    console.log(`   Beneficiary: ${beneficiary}`);
+
     let tx;
     if (depositor) {
       // Use createEscrowFor when depositor is specified (Fusion+ flow)
@@ -74,16 +86,27 @@ export class ChainServiceSimple {
         );
       } else {
         // ERC20 escrow - still needs safety deposit in ETH
-        tx = await escrowContract.createEscrowFor(
-          escrowId,
-          depositor,
-          beneficiary,
-          token,
-          amount,
-          hashlock,
-          timelock,
-          { value: safetyDeposit } // Safety deposit required even for ERC20
-        );
+        console.log(`   💰 Creating ERC20 escrow (createEscrowFor), safety deposit required`);
+        try {
+          tx = await escrowContract.createEscrowFor(
+            escrowId,
+            depositor,
+            beneficiary,
+            token,
+            amount,
+            hashlock,
+            timelock,
+            { value: safetyDeposit } // Safety deposit required even for ERC20
+          );
+        } catch (error: any) {
+          console.error(`   ❌ Transaction failed:`, error.message);
+          if (error.message.includes('insufficient funds')) {
+            console.error(`   💸 Insufficient funds for gas payment`);
+            console.error(`   💳 Signer address: ${signerAddress}`);
+            console.error(`   💰 Signer balance: ${ethers.formatEther(signerBalance)} ETH`);
+          }
+          throw error;
+        }
       }
     } else {
       // Use regular createEscrow when no depositor specified
@@ -101,15 +124,26 @@ export class ChainServiceSimple {
         );
       } else {
         // ERC20 escrow - still needs safety deposit in ETH
-        tx = await escrowContract.createEscrow(
-          escrowId,
-          beneficiary,
-          token,
-          amount,
-          hashlock,
-          timelock,
-          { value: safetyDeposit } // Safety deposit required even for ERC20
-        );
+        console.log(`   💰 Creating ERC20 escrow, safety deposit required`);
+        try {
+          tx = await escrowContract.createEscrow(
+            escrowId,
+            beneficiary,
+            token,
+            amount,
+            hashlock,
+            timelock,
+            { value: safetyDeposit } // Safety deposit required even for ERC20
+          );
+        } catch (error: any) {
+          console.error(`   ❌ Transaction failed:`, error.message);
+          if (error.message.includes('insufficient funds')) {
+            console.error(`   💸 Insufficient funds for gas payment`);
+            console.error(`   💳 Signer address: ${signerAddress}`);
+            console.error(`   💰 Signer balance: ${ethers.formatEther(signerBalance)} ETH`);
+          }
+          throw error;
+        }
       }
     }
 
@@ -250,5 +284,22 @@ export class ChainServiceSimple {
       console.error('Failed to send cross-chain secret reveal:', error);
       return null;
     }
+  }
+
+  getAptosAccount(): any {
+    return this.aptos.account;
+  }
+
+  async submitMultiAgentTransaction(
+    rawTxn: any,
+    userSignature: any,
+    feePayerSignature: any
+  ): Promise<any> {
+    return this.aptos.aptos.transaction.submit.multiAgent({
+      transaction: rawTxn,
+      senderAuthenticator: userSignature,
+      additionalSignersAuthenticators: [],
+      feePayerAuthenticator: feePayerSignature
+    });
   }
 }

@@ -7,6 +7,13 @@ import {
   Account
 } from '@aptos-labs/ts-sdk';
 
+// Helper function to convert Uint8Array to hex string (browser-compatible)
+function toHex(uint8array: Uint8Array): string {
+  return Array.from(uint8array)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 interface EscrowParams {
   escrowId: Uint8Array;
   beneficiary: string;
@@ -77,8 +84,8 @@ export class SponsoredTransactionV2 {
     userAuthenticatorBytes: string;
   } {
     return {
-      transactionBytes: Buffer.from(transaction.bcsToBytes()).toString('hex'),
-      userAuthenticatorBytes: Buffer.from(userAuthenticator.bcsToBytes()).toString('hex')
+      transactionBytes: toHex(new Uint8Array(transaction.bcsToBytes())),
+      userAuthenticatorBytes: toHex(new Uint8Array(userAuthenticator.bcsToBytes()))
     };
   }
 }

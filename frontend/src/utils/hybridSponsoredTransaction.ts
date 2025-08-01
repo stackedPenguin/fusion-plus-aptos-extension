@@ -8,6 +8,13 @@ import {
   Deserializer
 } from '@aptos-labs/ts-sdk';
 
+// Helper function to convert Uint8Array to hex string (browser-compatible)
+function toHex(uint8array: Uint8Array): string {
+  return Array.from(uint8array)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 /**
  * Hybrid approach that works with current wallet limitations
  * Uses a combination of wallet signing and direct SDK calls
@@ -41,7 +48,7 @@ export class HybridSponsoredTransaction {
   }> {
     // Create a structured message for the user to sign
     const message = `Aptos Escrow Creation:
-Escrow ID: ${Buffer.from(escrowParams.escrowId).toString('hex')}
+Escrow ID: ${toHex(new Uint8Array(escrowParams.escrowId))}
 Beneficiary: ${escrowParams.beneficiary}
 Amount: ${escrowParams.amount}
 Timelock: ${escrowParams.timelock}

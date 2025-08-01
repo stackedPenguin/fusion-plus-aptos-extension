@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Martian Wallet Test</title>
+</head>
+<body>
+    <h1>Martian Wallet Transaction Test</h1>
+    <button id="connect">1. Connect Martian</button>
+    <button id="test1" disabled>2. Test Simple Transfer</button>
+    <button id="test2" disabled>3. Test Escrow (Hex Args)</button>
+    <button id="test3" disabled>4. Test Escrow (Array Args)</button>
+    <button id="test4" disabled>5. Test Escrow (No Type Field)</button>
+    <div id="status"></div>
+    <pre id="logs"></pre>
+
+    <script>
+        let account = null;
+        const logs = document.getElementById('logs');
+        const status = document.getElementById('status');
+        
+        function log(msg, data) {
+            console.log(msg, data);
+            logs.textContent += msg + (data ? '\n' + JSON.stringify(data, null, 2) : '') + '\n\n';
+        }
+
+        // Connect button
+        document.getElementById('connect').onclick = async () => {
+            try {
+                const response = await window.martian.connect();
+                account = response.address;
+                status.textContent = 'Connected: ' + account;
+                log('Connected to Martian:', response);
+                
+                // Enable test buttons
+                document.querySelectorAll('button:not(#connect)').forEach(btn => btn.disabled = false);
+            } catch (error) {
+                log('Connection error:', error.message);
+            }
+        };
+
+        // Test 1: Simple APT transfer (known to work)
+        document.getElementById('test1').onclick = async () => {
+            try {
+                const payload = {
+                    function: "0x1::coin::transfer",
+                    type_arguments: ["0x1::aptos_coin::AptosCoin"],
+                    arguments: [
+                        "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532", // resolver
+                        "1000000" // 0.01 APT
+                    ]
+                };
+                
+                log('Test 1 - Simple transfer payload:', payload);
+                
+                const txnHash = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('Success! Transaction hash:', txnHash);
+            } catch (error) {
+                log('Test 1 failed:', error.message);
+            }
+        };
+
+        // Test 2: Escrow with hex strings for vector<u8>
+        document.getElementById('test2').onclick = async () => {
+            try {
+                const payload = {
+                    type: "entry_function_payload",
+                    function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                    type_arguments: [],
+                    arguments: [
+                        "0xcea7924199e6fcca2b7796360412e4b5da37226d5865d5b66295f4d62b0a3c", // escrow_id as hex
+                        "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532", // beneficiary
+                        "50000000", // amount
+                        "0xa982e3224c413dde862a6b3cf34dc39dea6e7e4dc46f10e57295ab3c0a12fdbb", // hashlock as hex
+                        "1754084635", // timelock
+                        "100000" // safety deposit
+                    ]
+                };
+                
+                log('Test 2 - Escrow with hex args:', payload);
+                
+                const txnHash = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('Success! Transaction hash:', txnHash);
+            } catch (error) {
+                log('Test 2 failed:', error.message);
+            }
+        };
+
+        // Test 3: Escrow with arrays for vector<u8>
+        document.getElementById('test3').onclick = async () => {
+            try {
+                // Create test arrays
+                const escrowId = new Uint8Array(32);
+                const hashlock = new Uint8Array(32);
+                crypto.getRandomValues(escrowId);
+                crypto.getRandomValues(hashlock);
+                
+                const payload = {
+                    type: "entry_function_payload",
+                    function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                    type_arguments: [],
+                    arguments: [
+                        Array.from(escrowId), // array of numbers
+                        "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532", // beneficiary
+                        "50000000", // amount
+                        Array.from(hashlock), // array of numbers
+                        "1754084635", // timelock
+                        "100000" // safety deposit
+                    ]
+                };
+                
+                log('Test 3 - Escrow with array args:', {
+                    ...payload,
+                    arguments: [
+                        '[Array of ' + payload.arguments[0].length + ' numbers]',
+                        payload.arguments[1],
+                        payload.arguments[2],
+                        '[Array of ' + payload.arguments[3].length + ' numbers]',
+                        payload.arguments[4],
+                        payload.arguments[5]
+                    ]
+                });
+                
+                const txnHash = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('Success! Transaction hash:', txnHash);
+            } catch (error) {
+                log('Test 3 failed:', error.message);
+            }
+        };
+
+        // Test 4: Escrow without type field
+        document.getElementById('test4').onclick = async () => {
+            try {
+                const escrowId = new Uint8Array(32);
+                const hashlock = new Uint8Array(32);
+                crypto.getRandomValues(escrowId);
+                crypto.getRandomValues(hashlock);
+                
+                const payload = {
+                    function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                    type_arguments: [],
+                    arguments: [
+                        Array.from(escrowId), // array of numbers
+                        "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532", // beneficiary
+                        "50000000", // amount
+                        Array.from(hashlock), // array of numbers
+                        "1754084635", // timelock
+                        "100000" // safety deposit
+                    ]
+                };
+                
+                log('Test 4 - Escrow without type field:', {
+                    ...payload,
+                    arguments: [
+                        '[Array of ' + payload.arguments[0].length + ' numbers]',
+                        payload.arguments[1],
+                        payload.arguments[2],
+                        '[Array of ' + payload.arguments[3].length + ' numbers]',
+                        payload.arguments[4],
+                        payload.arguments[5]
+                    ]
+                });
+                
+                const txnHash = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('Success! Transaction hash:', txnHash);
+            } catch (error) {
+                log('Test 4 failed:', error.message);
+            }
+        };
+    </script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import TransactionPanel from './components/TransactionPanel';
 import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
 import { WalletTester } from './components/WalletTester';
+import { MartianWalletConnection } from './utils/martianWalletConnection';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -24,6 +25,31 @@ function App() {
   const [orderService] = useState(() => new OrderService());
   const [showWalletTester, setShowWalletTester] = useState(false);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
+  const [martianConnected, setMartianConnected] = useState(false);
+
+  // Listen for Martian connection events
+  useEffect(() => {
+    const handleMartianConnected = (event: any) => {
+      console.log('[App] Martian connected event received:', event.detail);
+      setMartianConnected(true);
+      // Update Aptos balance if we have the account
+      if (event.detail?.address) {
+        // Trigger balance update
+        setAptosBalance('Loading...');
+      }
+    };
+
+    window.addEventListener('martian:connected', handleMartianConnected);
+    
+    // Check if already connected
+    if ((window as any).__martianConnected) {
+      setMartianConnected(true);
+    }
+
+    return () => {
+      window.removeEventListener('martian:connected', handleMartianConnected);
+    };
+  }, []);
 
   // Update Ethereum balance
   useEffect(() => {
@@ -49,7 +75,10 @@ function App() {
 
   // Update Aptos balance
   useEffect(() => {
-    if (aptosAccount?.address) {
+    // Check for wallet adapter account or Martian direct connection
+    const accountAddress = aptosAccount?.address || (window as any).__martianAccount?.address;
+    
+    if (accountAddress) {
       const updateBalance = async () => {
         try {
           const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
@@ -60,7 +89,7 @@ function App() {
             body: JSON.stringify({
               function: '0x1::coin::balance',
               type_arguments: ['0x1::aptos_coin::AptosCoin'],
-              arguments: [aptosAccount.address]
+              arguments: [accountAddress]
             })
           });
           
@@ -83,7 +112,7 @@ function App() {
     } else {
       setAptosBalance('0');
     }
-  }, [aptosAccount]);
+  }, [aptosAccount, martianConnected]);
 
   // Handle balance refresh events from SwapInterface
   useEffect(() => {
@@ -181,7 +210,7 @@ function App() {
           <div className="swap-container">
             <SwapInterface
               ethAccount={ethAccount}
-              aptosAccount={aptosAccount?.address || null}
+              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
               ethSigner={ethSigner}
               orderService={orderService}
               ethBalance={ethBalance}
@@ -216,21 +245,37 @@ function App() {
               </div>
             </div>
 
-            <div className={`wallet-card ${aptosAccount ? 'connected' : ''}`}>
+            <div className={`wallet-card ${aptosAccount || martianConnected ? 'connected' : ''}`}>
               <div className="wallet-icon">
                 <img src="/petra.png" alt="Aptos" />
               </div>
               <div className="wallet-content">
                 <h3>Aptos</h3>
-                {aptosAccount ? (
+                {aptosAccount || martianConnected ? (
                   <>
                     <div className="wallet-info">
                       <div className="wallet-address">
-                        {aptosAccount.address.slice(0, 6)}...{aptosAccount.address.slice(-4)}
+                        {(() => {
+                          const address = aptosAccount?.address || (window as any).__martianAccount?.address;
+                          return address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '';
+                        })()}
                       </div>
                       <div className="balance-info">{aptosBalance} APT</div>
+                      {martianConnected && !aptosAccount && (
+                        <div style={{ fontSize: '12px', color: '#4CAF50' }}>✓ Martian Connected</div>
+                      )}
                     </div>
-                    <button className="disconnect-btn" onClick={disconnectAptos}>Disconnect</button>
+                    <button className="disconnect-btn" onClick={() => {
+                      if (martianConnected && !aptosAccount) {
+                        MartianWalletConnection.disconnect();
+                        (window as any).__martianConnected = false;
+                        (window as any).__martianAccount = null;
+                        setMartianConnected(false);
+                        setAptosBalance('0');
+                      } else {
+                        disconnectAptos();
+                      }
+                    }}>Disconnect</button>
                   </>
                 ) : (
                   <div className="wallet-options" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -248,23 +293,115 @@ function App() {
                           }}
                         >
                           <option value="">Select Wallet</option>
-                          {wallets.map((wallet) => (
-                            <option key={wallet.name} value={wallet.name}>
-                              {wallet.name}
-                            </option>
-                          ))}
+                          {/* Filter out duplicate wallets by name */}
+                          {wallets
+                            .filter((wallet, index, self) => 
+                              index === self.findIndex(w => w.name === wallet.name)
+                            )
+                            .map((wallet) => (
+                              <option key={wallet.name} value={wallet.name}>
+                                {wallet.name}
+                              </option>
+                            ))}
                         </select>
                         <button 
                           onClick={() => {
                             if (selectedWallet) {
-                              try {
-                                const wallet = wallets.find(w => w.name === selectedWallet);
-                                if (wallet) {
+                              console.log(`[Wallet Connection] Starting connection process for: ${selectedWallet}`);
+                              console.log(`[Wallet Connection] Available wallets:`, wallets.map(w => ({ 
+                                name: w.name, 
+                                readyState: (w as any).readyState,
+                                installed: !!(window as any)[w.name.toLowerCase()]
+                              })));
+                              
+                              const wallet = wallets.find(w => w.name === selectedWallet);
+                              if (!wallet) {
+                                console.error(`[Wallet Connection] Wallet ${selectedWallet} not found in wallets array`);
+                                alert(`Wallet ${selectedWallet} not found`);
+                                return;
+                              }
+                              
+                              console.log(`[Wallet Connection] Found wallet:`, {
+                                name: wallet.name,
+                                readyState: (wallet as any).readyState,
+                                url: (wallet as any).url
+                              });
+                              
+                              // Check if wallet is installed
+                              const isInstalled = (window as any)[selectedWallet.toLowerCase()] || 
+                                                 (window as any).aptos?.name === selectedWallet ||
+                                                 (window as any).martian;
+                              
+                              console.log(`[Wallet Connection] Wallet installed check:`, {
+                                windowObject: !!(window as any)[selectedWallet.toLowerCase()],
+                                aptosName: (window as any).aptos?.name,
+                                hasMartian: !!(window as any).martian,
+                                isInstalled
+                              });
+                              
+                              if (!isInstalled && selectedWallet === 'Martian') {
+                                alert('Martian wallet extension not detected. Please install it from Chrome Web Store.');
+                                window.open('https://chrome.google.com/webstore/detail/martian-aptos-wallet/efbglgofoippbgcjepnhiblaibcnclgk', '_blank');
+                                return;
+                              }
+                              
+                              console.log(`[Wallet Connection] Calling connection method...`);
+                              
+                              // Special handling for Martian wallet
+                              if (selectedWallet === 'Martian' && (window as any).martian) {
+                                console.log('[Wallet Connection] Using direct Martian connection method');
+                                
+                                MartianWalletConnection.connect()
+                                  .then(async (account) => {
+                                    console.log('[Wallet Connection] Martian connected:', account);
+                                    
+                                    // Set a flag to indicate Martian is connected
+                                    (window as any).__martianConnected = true;
+                                    (window as any).__martianAccount = account;
+                                    
+                                    // Force update the UI by dispatching a custom event
+                                    window.dispatchEvent(new CustomEvent('martian:connected', { detail: account }));
+                                    
+                                    // Skip wallet adapter sync for Martian - we don't need it
+                                    console.log('[Wallet Connection] Martian connected successfully - skipping wallet adapter sync');
+                                    
+                                    // Force a small delay to ensure UI updates
+                                    setTimeout(() => {
+                                      console.log('[Wallet Connection] Martian wallet ready for use');
+                                    }, 100);
+                                  })
+                                  .catch((error) => {
+                                    console.error('[Wallet Connection] Martian direct connection failed:', error);
+                                    alert(error.message);
+                                  });
+                              } else {
+                                // Use standard wallet adapter for other wallets
+                                try {
                                   connectAptos(wallet.name);
+                                  console.log(`[Wallet Connection] Successfully connected to ${selectedWallet}`);
+                                } catch (error: any) {
+                                  console.error(`[Wallet Connection] Connection failed:`, {
+                                    wallet: selectedWallet,
+                                    error,
+                                    errorMessage: error?.message,
+                                    errorCode: error?.code,
+                                    errorStack: error?.stack
+                                  });
+                                  
+                                  // Provide specific error messages
+                                  let errorMessage = `Failed to connect ${selectedWallet}: `;
+                                  if (error.message?.includes('Network Error') || error.code === 'NETWORK_ERROR') {
+                                    errorMessage += 'Network error - make sure the wallet extension is installed and unlocked';
+                                  } else if (error.message?.includes('User rejected') || error.code === 4001) {
+                                    errorMessage += 'Connection rejected by user';
+                                  } else if (error.message?.includes('not installed')) {
+                                    errorMessage += 'Wallet extension not installed';
+                                  } else {
+                                    errorMessage += error.message || 'Unknown error';
+                                  }
+                                  
+                                  alert(errorMessage);
                                 }
-                              } catch (error: any) {
-                                console.error('Failed to connect wallet:', error);
-                                alert(`Failed to connect ${selectedWallet}: ${error.message || 'Unknown error'}`);
                               }
                             }
                           }}

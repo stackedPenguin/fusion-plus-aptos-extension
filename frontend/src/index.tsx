@@ -8,10 +8,12 @@ import { PontemWallet } from '@pontem/wallet-adapter-plugin';
 import { MSafeWalletAdapter } from '@msafe/aptos-wallet-adapter';
 import { RiseWallet } from '@rise-wallet/wallet-adapter';
 import { TrustWallet } from '@trustwallet/aptos-wallet-adapter';
+import { MartianWallet } from '@martianwallet/aptos-wallet-adapter';
 
 // Add multiple wallets to test which support sponsored transactions
 const wallets = [
   new PetraWallet(),
+  new MartianWallet(),
   new PontemWallet(),
   new MSafeWalletAdapter(),
   new RiseWallet(),

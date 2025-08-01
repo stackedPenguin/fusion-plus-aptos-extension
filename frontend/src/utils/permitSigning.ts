@@ -1,4 +1,11 @@
-import { BCS, TxnBuilderTypes } from '@aptos-labs/ts-sdk';
+// Permit signing utilities for Aptos escrow
+
+// Helper function to convert Uint8Array to hex string (browser-compatible)
+function toHex(uint8array: Uint8Array): string {
+  return Array.from(uint8array)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 export interface EscrowPermitParams {
   escrowId: Uint8Array;
@@ -18,10 +25,10 @@ export class PermitSigner {
     // Format: "APTOS_ESCROW_PERMIT:<escrow_id>:<amount>:<beneficiary>:<hashlock>:<timelock>:<nonce>:<expiry>"
     const parts = [
       'APTOS_ESCROW_PERMIT',
-      Buffer.from(params.escrowId).toString('hex'),
+      toHex(params.escrowId),
       params.amount,
       params.beneficiary,
-      Buffer.from(params.hashlock).toString('hex'),
+      toHex(params.hashlock),
       params.timelock,
       params.nonce,
       params.expiry
@@ -31,48 +38,11 @@ export class PermitSigner {
   }
 
   /**
-   * Generate BCS-encoded permit message for signing
+   * Generate bytes for signing (simple string encoding)
    */
   static generatePermitBytesForSigning(params: EscrowPermitParams): Uint8Array {
-    const encoder = new BCS.Serializer();
-    
-    // Start with the prefix
-    const prefix = new TextEncoder().encode("APTOS_ESCROW_PERMIT:");
-    encoder.serializeBytes(prefix);
-    
-    // Add escrow ID
-    encoder.serializeBytes(params.escrowId);
-    encoder.serializeStr(":");
-    
-    // Add amount (as bytes)
-    const amountBytes = BCS.bcsSerializeUint64(BigInt(params.amount));
-    encoder.serializeBytes(amountBytes);
-    encoder.serializeStr(":");
-    
-    // Add beneficiary (as bytes)
-    const beneficiaryBytes = BCS.bcsSerializeStr(params.beneficiary);
-    encoder.serializeBytes(beneficiaryBytes);
-    encoder.serializeStr(":");
-    
-    // Add hashlock
-    encoder.serializeBytes(params.hashlock);
-    encoder.serializeStr(":");
-    
-    // Add timelock (as bytes)
-    const timelockBytes = BCS.bcsSerializeUint64(BigInt(params.timelock));
-    encoder.serializeBytes(timelockBytes);
-    encoder.serializeStr(":");
-    
-    // Add nonce (as bytes)
-    const nonceBytes = BCS.bcsSerializeUint64(BigInt(params.nonce));
-    encoder.serializeBytes(nonceBytes);
-    encoder.serializeStr(":");
-    
-    // Add expiry (as bytes)
-    const expiryBytes = BCS.bcsSerializeUint64(BigInt(params.expiry));
-    encoder.serializeBytes(expiryBytes);
-    
-    return encoder.getBytes();
+    const message = this.generatePermitMessage(params);
+    return new TextEncoder().encode(message);
   }
 
   /**

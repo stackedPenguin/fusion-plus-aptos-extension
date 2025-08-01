@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Martian Wallet Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+        #status { margin: 20px 0; padding: 10px; background: #f0f0f0; }
+        #logs { background: #000; color: #0f0; padding: 10px; font-family: monospace; white-space: pre-wrap; }
+        .error { color: #f00; }
+        .success { color: #0f0; }
+    </style>
+</head>
+<body>
+    <h1>Martian Wallet Test</h1>
+    
+    <div id="status">
+        <strong>Status:</strong> <span id="wallet-status">Checking wallet...</span>
+    </div>
+    
+    <div>
+        <button id="check-wallet">Check Wallet</button>
+        <button id="connect" disabled>Connect Martian</button>
+        <button id="check-network" disabled>Check Network</button>
+        <button id="test-simple" disabled>Test Simple Transfer</button>
+        <button id="test-escrow" disabled>Test Escrow</button>
+    </div>
+    
+    <h3>Logs:</h3>
+    <pre id="logs"></pre>
+
+    <script>
+        const logs = document.getElementById('logs');
+        const status = document.getElementById('wallet-status');
+        let account = null;
+        
+        function log(msg, type = '') {
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : '';
+            logs.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+            console.log(msg);
+        }
+        
+        function updateStatus(msg, type = '') {
+            status.textContent = msg;
+            status.className = type;
+        }
+        
+        // Check wallet button
+        document.getElementById('check-wallet').onclick = () => {
+            log('Checking for Martian wallet...');
+            
+            if (typeof window.martian !== 'undefined') {
+                log('✅ Martian detected!', 'success');
+                log('Martian methods: ' + Object.keys(window.martian).join(', '));
+                updateStatus('Martian wallet detected', 'success');
+                
+                // Enable connect button
+                document.getElementById('connect').disabled = false;
+            } else {
+                log('❌ Martian not detected', 'error');
+                log('Window objects present: ' + Object.keys(window).filter(k => k.includes('martian') || k.includes('aptos')).join(', '));
+                updateStatus('Martian wallet not found', 'error');
+                
+                if (window.location.protocol === 'file:') {
+                    log('⚠️ Running from file:// protocol. Wallet extensions may not work properly.', 'error');
+                    log('Try serving this file via http://localhost or opening from the React app.', 'error');
+                }
+            }
+        };
+        
+        // Connect button
+        document.getElementById('connect').onclick = async () => {
+            try {
+                log('Attempting to connect...');
+                const response = await window.martian.connect();
+                account = response.address || response;
+                log('✅ Connected! Account: ' + account, 'success');
+                updateStatus('Connected: ' + account, 'success');
+                
+                // Enable test buttons
+                document.getElementById('check-network').disabled = false;
+                document.getElementById('test-simple').disabled = false;
+                document.getElementById('test-escrow').disabled = false;
+            } catch (error) {
+                log('❌ Connection failed: ' + error.message, 'error');
+                updateStatus('Connection failed', 'error');
+            }
+        };
+        
+        // Check network button
+        document.getElementById('check-network').onclick = async () => {
+            try {
+                const network = await window.martian.network();
+                log('Network: ' + JSON.stringify(network, null, 2), 'success');
+                
+                // Check if testnet
+                if (network.name && !network.name.toLowerCase().includes('test')) {
+                    log('⚠️ Not on testnet! Switch to testnet in Martian settings.', 'error');
+                }
+            } catch (error) {
+                log('❌ Network check failed: ' + error.message, 'error');
+            }
+        };
+        
+        // Test simple transfer
+        document.getElementById('test-simple').onclick = async () => {
+            try {
+                const payload = {
+                    function: "0x1::coin::transfer",
+                    type_arguments: ["0x1::aptos_coin::AptosCoin"],
+                    arguments: [
+                        "0x1", // Send to 0x1
+                        "1"    // 0.00000001 APT
+                    ]
+                };
+                
+                log('Testing simple transfer with payload:');
+                log(JSON.stringify(payload, null, 2));
+                
+                const tx = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('✅ Success! Transaction: ' + tx, 'success');
+            } catch (error) {
+                log('❌ Simple transfer failed: ' + error.message, 'error');
+            }
+        };
+        
+        // Test escrow
+        document.getElementById('test-escrow').onclick = async () => {
+            try {
+                // Generate random data
+                const escrowId = new Uint8Array(32);
+                const hashlock = new Uint8Array(32);
+                crypto.getRandomValues(escrowId);
+                crypto.getRandomValues(hashlock);
+                
+                // Convert to hex
+                const toHex = (arr) => '0x' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                const payload = {
+                    type: "entry_function_payload",
+                    function: "0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow",
+                    type_arguments: [],
+                    arguments: [
+                        toHex(escrowId),
+                        "0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532",
+                        "50000000",
+                        toHex(hashlock),
+                        Math.floor(Date.now() / 1000 + 3600).toString(),
+                        "100000"
+                    ]
+                };
+                
+                log('Testing escrow with payload:');
+                log(JSON.stringify(payload, null, 2));
+                
+                const tx = await window.martian.generateSignAndSubmitTransaction(account, payload);
+                log('✅ Success! Transaction: ' + tx, 'success');
+            } catch (error) {
+                log('❌ Escrow test failed: ' + error.message, 'error');
+            }
+        };
+        
+        // Auto-check on load
+        window.onload = () => {
+            setTimeout(() => {
+                document.getElementById('check-wallet').click();
+            }, 1000);
+        };
+    </script>
+</body>
+</html>
