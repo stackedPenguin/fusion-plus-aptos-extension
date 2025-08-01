@@ -7,6 +7,7 @@ import SwapInterface from './components/SwapInterface';
 import TransactionPanel from './components/TransactionPanel';
 import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
+import { WalletTester } from './components/WalletTester';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -21,6 +22,8 @@ function App() {
   const { account: aptosAccount, connect: connectAptos, disconnect: disconnectAptos, wallets } = useWallet();
   const [aptosBalance, setAptosBalance] = useState<string>('0');
   const [orderService] = useState(() => new OrderService());
+  const [showWalletTester, setShowWalletTester] = useState(false);
+  const [selectedWallet, setSelectedWallet] = useState<string>('');
 
   // Update Ethereum balance
   useEffect(() => {
@@ -148,8 +151,8 @@ function App() {
     }
   };
 
-  const disconnectEthereum = async () => {
-    await web3Modal.clearCachedProvider();
+  const disconnectEthereum = () => {
+    web3Modal.clearCachedProvider();
     setEthAccount(null);
     setEthSigner(null);
   };
@@ -215,7 +218,7 @@ function App() {
 
             <div className={`wallet-card ${aptosAccount ? 'connected' : ''}`}>
               <div className="wallet-icon">
-                <img src="/petra.png" alt="Petra" />
+                <img src="/petra.png" alt="Aptos" />
               </div>
               <div className="wallet-content">
                 <h3>Aptos</h3>
@@ -230,12 +233,55 @@ function App() {
                     <button className="disconnect-btn" onClick={disconnectAptos}>Disconnect</button>
                   </>
                 ) : (
-                  <button onClick={() => {
-                    const petraWallet = wallets?.find(wallet => wallet.name === 'Petra');
-                    if (petraWallet) {
-                      connectAptos(petraWallet.name);
-                    }
-                  }}>Connect</button>
+                  <div className="wallet-options" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {wallets && wallets.length > 0 ? (
+                      <>
+                        <select 
+                          value={selectedWallet} 
+                          onChange={(e) => setSelectedWallet(e.target.value)}
+                          style={{
+                            padding: '8px',
+                            borderRadius: '4px',
+                            backgroundColor: '#333',
+                            color: '#fff',
+                            border: '1px solid #555'
+                          }}
+                        >
+                          <option value="">Select Wallet</option>
+                          {wallets.map((wallet) => (
+                            <option key={wallet.name} value={wallet.name}>
+                              {wallet.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button 
+                          onClick={() => {
+                            if (selectedWallet) {
+                              try {
+                                const wallet = wallets.find(w => w.name === selectedWallet);
+                                if (wallet) {
+                                  connectAptos(wallet.name);
+                                }
+                              } catch (error: any) {
+                                console.error('Failed to connect wallet:', error);
+                                alert(`Failed to connect ${selectedWallet}: ${error.message || 'Unknown error'}`);
+                              }
+                            }
+                          }}
+                          disabled={!selectedWallet}
+                          style={{
+                            opacity: selectedWallet ? 1 : 0.5
+                          }}
+                        >
+                          Connect
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => alert('No Aptos wallets detected')}>
+                        No Wallets Found
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -247,6 +293,35 @@ function App() {
               aptosAccount={aptosAccount?.address || null}
               orderService={orderService}
             />
+          </div>
+          
+          <div className="sidebar-section">
+            <button 
+              onClick={() => setShowWalletTester(!showWalletTester)}
+              className="wallet-tester-toggle"
+              style={{
+                width: '100%',
+                padding: '10px',
+                marginTop: '10px',
+                background: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: 'pointer'
+              }}
+            >
+              {showWalletTester ? 'Hide' : 'Show'} Wallet Tester
+            </button>
+            
+            {showWalletTester && (
+              <div style={{ 
+                marginTop: '10px',
+                maxHeight: '400px',
+                overflowY: 'auto'
+              }}>
+                <WalletTester />
+              </div>
+            )}
           </div>
         </div>
       </div>

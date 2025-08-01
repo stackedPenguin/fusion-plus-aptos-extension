@@ -85,3 +85,55 @@ Here is the **detailed flow for a WETH (Ethereum) → APT (Aptos)** cross-chain 
 - This mirrors the proven, production-ready 1inch Fusion+ workflow for atomic, trustless, and gasless user experiences—even between EVM and non-EVM chains[1].
 
 [1] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/1363211/0e7297b4-5ac0-4add-b6a2-151deac856f5/1inch-fusion-plus.pdf
+
+On the EVM side (such as Ethereum), gas sponsorship—the ability for a third party (like the resolver in Fusion+) to pay transaction fees on behalf of users—can be achieved with several modern mechanisms. Here’s how it works in production and what is powering these experiences:
+
+Main Technologies for Gas Sponsorship on Ethereum
+1. Meta-Transactions and Relayers
+Users sign a transaction message off-chain (EIP-712 signature) describing what they want to do, with no gas price or ETH requirement.
+
+A relayer service (run by the resolver or protocol backend) receives this message, constructs the actual on-chain transaction, and submits it to Ethereum, paying all required gas fees from its own ETH balance.
+
+The relayer can recover its costs by integrating fees or spreads into the swap quote, or by receiving compensation in ERC-20 tokens.
+
+Standards: Early solutions relied on EIP-2771 (meta-transactions), where smart contracts understand a “trusted forwarder” to interpret transactions as though they came from the user, but submitted/payed for by the relayer.
+
+Limitation: Contracts need to be built/upgraded to recognize meta-transactions and trusted forwarders.
+
+2. Account Abstraction (ERC-4337 and Paymasters)
+ERC-4337 enables “smart accounts” (smart contract wallets) that can accept more flexible transaction flows.
+
+With paymasters, a special smart contract pays gas fees for user operations, enabling fully programmable gas sponsorship (e.g., sponsor-specific user actions, or allow payment in ERC-20 tokens).
+
+Flow: User signs a user operation, submits it (possibly through a web UI), the bundler forwards it to the EntryPoint contract, and the paymaster reimburses the gas to validators.
+
+Developers don’t need to modify existing contracts; plug-and-play paymaster contract logic enables gas abstraction for new and existing decentralized apps.
+
+3. EIP-7702 and EIP-3074 (EOA Gas Sponsorship, New in 2024/2025)
+EIP-7702 (now part of Ethereum’s “Pectra” upgrade) allows a classic EOA (Externally Owned Account—like MetaMask wallets) to temporarily take on smart contract features for a single transaction.
+
+This means EOAs can delegate gas payments to a sponsor wallet for just one transaction, without needing to upgrade to full smart contract wallets.
+
+How it works: The user’s EOA signs a transaction that permits the sponsor to pay gas. The sponsor pre-approves and funds the execution via API/call.
+
+Usage in production: Platforms and wallet services are actively integrating these flows so “fee sponsors” can be designated for transfers; users may simply use a dapp or wallet UI where gas is paid for by another address through this mechanism.
+
+EIP-3074 introduces new opcodes (AUTH/AUTHCALL) to let a third party execute and pay for a transaction on behalf of the user.
+
+Putting It All Together: Fusion+, Relayers, and Gasless User Experience
+In your Fusion+ swap context:
+
+Users sign the swap intent off-chain, never needing ETH.
+
+The resolver (or protocol relayer) receives this off-chain signed message, constructs and submits the actual Ethereum transaction, and funds all gas directly.
+
+Depending on implementation, this is done either through classic meta-transaction patterns (with a relayer and trusted forwarder), through paymasters and ERC-4337, or—soon—directly via EIP-7702 for EOAs, which is highly efficient and requires no wallet upgrade.
+
+Users never need to worry about gas: They simply sign an intent; all real blockchain actions are paid for and executed by the resolver/relayer, preserving a seamless, gasless user experience in production.
+
+Summary Table
+Mechanism	Method	Who Pays Gas	User Needs ETH?	Status
+Meta-transactions (EIP-2771)	Relayer submits tx; pays gas	Relayer	No	Supported
+Account Abstraction (ERC-4337, Paymasters)	Smart account covers user; paymaster reimburses	Paymaster	No	Supported on major chains
+EIP-7702 / EIP-3074	EOA delegates gas to sponsor for 1 tx	Sponsor	No	Rolling out in 2024/5
+Gas sponsorship on Ethereum (and other EVM chains) is achieved by relayers, paymasters, or EOA sponsors covering transaction fees for the user—powered by meta-transactions, account abstraction (ERC-4337), and new Pectra upgrade mechanisms (EIP-7702). This lets Fusion+ and similar protocols deliver truly gasless swaps for all users, with all costs handled programmatically by the resolver or protocol backend

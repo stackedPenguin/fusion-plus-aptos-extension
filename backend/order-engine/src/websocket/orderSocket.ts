@@ -116,6 +116,15 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
         io.to(`order:${data.orderId}`).emit('order:signed', data);
       }
     });
+
+    // Relay sponsored transaction event (Aptos fee payer model)
+    socket.on('order:signed:sponsored:v2', (data: any) => {
+      console.log('Relaying order:signed:sponsored:v2 event:', data);
+      io.emit('order:signed:sponsored:v2', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:signed:sponsored:v2', data);
+      }
+    });
     
     // Relay secret request/reveal events for Fusion+ protocol
     socket.on('secret:request', (data: any) => {

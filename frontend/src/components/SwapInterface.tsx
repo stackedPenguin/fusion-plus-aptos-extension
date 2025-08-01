@@ -6,6 +6,8 @@ import { WETHService } from '../services/WETHService';
 import { AssetFlowLogger } from '../services/AssetFlowLogger';
 import { CONTRACTS } from '../config/contracts';
 import { Serializer } from '@aptos-labs/ts-sdk';
+import { SponsoredTransactionV2 } from '../utils/sponsoredTransactionV2';
+import { walletSupportsSponsoredTransactions, detectWalletType } from '../utils/walletDetection';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -405,25 +407,105 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 // Get the user's secret hash from stored data
                 const userSecretHash = (window as any).__fusionPlusSecret?.secretHash || data.secretHash;
                 
-                // For now, we'll use the standard flow where resolver fronts APT
-                // TODO: Implement proper sponsored transactions when Petra wallet supports them
-                socket.emit('order:signed', {
-                  orderId: data.orderId,
-                  orderMessage: signedIntent.orderMessage,
-                  signature: signedIntent.signature,
-                  publicKey: signedIntent.publicKey,
-                  fullMessage: signedIntent.fullMessage,
-                  fromChain: 'APTOS',
-                  toChain: 'ETHEREUM',
-                  fromAmount: currentOrderData.fromAmount,
-                  toAmount: currentOrderData.minToAmount,
-                  secretHash: userSecretHash // Send user's secret hash
-                });
+                // Check if wallet supports sponsored transactions
+                const walletType = detectWalletType();
+                const supportsSponsoredTx = walletSupportsSponsoredTransactions();
                 
-                // Note for future: Sponsored transactions would allow user's APT to be used directly
-                // Currently falling back to resolver fronting APT due to wallet limitations
+                console.log(`Detected wallet: ${walletType}, supports sponsored tx: ${supportsSponsoredTx}`);
                 
-                await logger.logSwapStep('✅ Fusion+ order signed', 'Waiting for resolver to create escrows (gasless)');
+                // For Petra and other wallets that don't support sponsored transactions,
+                // use backend sponsorship where resolver creates escrow and pays gas
+                const useBackendSponsorship = walletType === 'petra' || !supportsSponsoredTx;
+                
+                if (useBackendSponsorship) {
+                  console.log('Using backend sponsorship for gasless experience');
+                  await logger.logSwapStep('✨ Gasless transaction', 'Resolver will create escrow and pay gas');
+                  await logger.logSwapStep('💰 Your APT will be used', 'Resolver only pays network fees');
+                  
+                  socket.emit('order:signed', {
+                    orderId: data.orderId,
+                    orderMessage: signedIntent.orderMessage,
+                    signature: signedIntent.signature,
+                    publicKey: signedIntent.publicKey,
+                    fullMessage: signedIntent.fullMessage,
+                    fromChain: 'APTOS',
+                    toChain: 'ETHEREUM',
+                    fromAmount: currentOrderData.fromAmount,
+                    toAmount: currentOrderData.minToAmount,
+                    secretHash: userSecretHash
+                  });
+                } else if (supportsSponsoredTx) {
+                  try {
+                    await logger.logSwapStep('💰 Preparing to use YOUR APT', 'Resolver will only pay gas fees');
+                  
+                  const sponsoredTx = new SponsoredTransactionV2();
+                  const escrowParams = {
+                    escrowId: signedIntent.orderMessage.escrow_id,
+                    beneficiary: CONTRACTS.RESOLVER.APTOS,
+                    amount: currentOrderData.fromAmount,
+                    hashlock: signedIntent.orderMessage.hashlock,
+                    timelock: signedIntent.orderMessage.timelock,
+                    safetyDeposit: '100000' // 0.001 APT
+                  };
+                  
+                  // Build the sponsored transaction
+                  const transaction = await sponsoredTx.buildSponsoredEscrowTransaction(
+                    currentOrderData.maker,
+                    escrowParams
+                  );
+                  
+                  // Have user sign as sender (not fee payer)
+                  console.log('Attempting to sign sponsored transaction:', transaction);
+                  const signResult = await (window as any).aptos.signTransaction(transaction);
+                  console.log('Sponsored transaction signed successfully:', signResult);
+                  
+                  // Send to resolver for fee payer signature
+                  socket.emit('order:signed:sponsored:v2', {
+                    orderId: data.orderId,
+                    orderMessage: signedIntent.orderMessage,
+                    signature: signedIntent.signature,
+                    publicKey: signedIntent.publicKey,
+                    fullMessage: signedIntent.fullMessage,
+                    fromChain: 'APTOS',
+                    toChain: 'ETHEREUM',
+                    fromAmount: currentOrderData.fromAmount,
+                    toAmount: currentOrderData.minToAmount,
+                    secretHash: userSecretHash,
+                    // Sponsored transaction data
+                    sponsoredTransaction: {
+                      transactionBytes: Buffer.from(transaction.bcsToBytes()).toString('hex'),
+                      userAuthenticatorBytes: Buffer.from(signResult.bcsToBytes()).toString('hex')
+                    }
+                  });
+                  
+                  await logger.logSwapStep('✅ Transaction signed', 'Your APT will be used for escrow');
+                  
+                  } catch (sponsorError: any) {
+                    console.error('Failed to create sponsored transaction, falling back:', sponsorError);
+                    console.error('Error details:', {
+                      message: sponsorError.message,
+                      code: sponsorError.code,
+                      stack: sponsorError.stack
+                    });
+                    await logger.logSwapStep('⚠️ Sponsored transaction failed', 'Using fallback method');
+                    
+                    // Fallback to old method
+                    socket.emit('order:signed', {
+                      orderId: data.orderId,
+                      orderMessage: signedIntent.orderMessage,
+                      signature: signedIntent.signature,
+                      publicKey: signedIntent.publicKey,
+                      fullMessage: signedIntent.fullMessage,
+                      fromChain: 'APTOS',
+                      toChain: 'ETHEREUM',
+                      fromAmount: currentOrderData.fromAmount,
+                      toAmount: currentOrderData.minToAmount,
+                      secretHash: userSecretHash
+                    });
+                  }
+                }
+                
+                await logger.logSwapStep('✅ Fusion+ order signed', 'Gasless: Resolver creating escrows and paying fees');
                 
                 // Update status to show we're waiting for resolver
                 setSwapStatus({

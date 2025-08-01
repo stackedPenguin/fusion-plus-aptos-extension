@@ -7,6 +7,7 @@ import { PermitService } from './PermitService';
 import { WETHService } from './WETHService';
 import dotenv from 'dotenv';
 import { createHash, randomBytes } from 'crypto';
+import { Deserializer, SimpleTransaction } from '@aptos-labs/ts-sdk';
 
 dotenv.config();
 
@@ -100,7 +101,7 @@ export class ResolverServiceV2 {
   private setupSocketListeners() {
     this.socket.on('connect', () => {
       console.log('Connected to order engine');
-      console.log('Listening for events: order:new, escrow:source:created, order:signed');
+      console.log('Listening for events: order:new, escrow:source:created, order:signed, order:signed:sponsored:v2');
       this.socket.emit('subscribe:active');
     });
 
@@ -139,6 +140,17 @@ export class ResolverServiceV2 {
       }
     });
 
+    // Listen for proper sponsored transaction V2 (multi-agent with fee payer)
+    this.socket.on('order:signed:sponsored:v2', async (data: any) => {
+      console.log('\n💎 Received order:signed:sponsored:v2 event (proper fee payer model)');
+      console.log('   From chain:', data.fromChain);
+      console.log('   Order ID:', data.orderId);
+      
+      if (data.fromChain === 'APTOS' && data.sponsoredTransaction) {
+        await this.handleSponsoredAptosOrderV2(data);
+      }
+    });
+
     // Listen for secret reveal from user (Fusion+ spec)
     this.socket.on('secret:reveal', async (data: any) => {
       console.log('\n🔓 Received secret:reveal event');
@@ -172,7 +184,7 @@ export class ResolverServiceV2 {
 
     // Log all events for debugging
     this.socket.onAny((eventName, ...args) => {
-      if (!['order:new', 'escrow:source:created', 'order:signed', 'order:signed:sponsored', 'connect', 'disconnect'].includes(eventName)) {
+      if (!['order:new', 'escrow:source:created', 'order:signed', 'order:signed:sponsored', 'order:signed:sponsored:v2', 'connect', 'disconnect'].includes(eventName)) {
         console.log(`[Socket Event] ${eventName}`);
       }
     });
@@ -1289,6 +1301,133 @@ export class ResolverServiceV2 {
       }
     } catch (error) {
       console.error('   ❌ Failed to process sponsored transaction:', error);
+      this.socket.emit('order:error', {
+        orderId: signedOrder.orderId,
+        error: 'Failed to create APT escrow with sponsored transaction',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  private async handleSponsoredAptosOrderV2(signedOrder: any): Promise<void> {
+    console.log('\n💎 Processing proper sponsored transaction (user pays APT, resolver pays gas)');
+    
+    try {
+      const { orderId, sponsoredTransaction } = signedOrder;
+      
+      // Get order from monitoring
+      let order: Order | undefined;
+      for (const [key] of this.monitoringFills.entries()) {
+        if (key.includes(orderId)) {
+          order = {
+            id: orderId,
+            fromChain: 'APTOS',
+            toChain: 'ETHEREUM',
+            fromToken: '0x1::aptos_coin::AptosCoin',
+            toToken: signedOrder.toToken || '',
+            fromAmount: signedOrder.fromAmount,
+            minToAmount: signedOrder.toAmount,
+            maker: signedOrder.orderMessage.depositor,
+            receiver: '0x17061146a55f31BB85c7e211143581B44f2a03d0',
+            secretHash: signedOrder.secretHash,
+            deadline: Date.now() + 3600000,
+            partialFillAllowed: false,
+            status: 'PENDING'
+          };
+          break;
+        }
+      }
+      
+      if (!order) {
+        console.error('   ❌ Order not found');
+        return;
+      }
+      
+      console.log('   📝 Processing multi-agent transaction with fee payer');
+      console.log('   💰 User will pay APT from their account');
+      console.log('   ⛽ Resolver will only pay gas fees');
+      
+      try {
+        // Deserialize transaction and user signature
+        const transactionBytes = Buffer.from(sponsoredTransaction.transactionBytes, 'hex');
+        const userAuthBytes = Buffer.from(sponsoredTransaction.userAuthenticatorBytes, 'hex');
+        
+        // Use Aptos SDK to handle the sponsored transaction
+        const account = this.chainService.aptosChainService.account;
+        const aptos = this.chainService.aptosChainService.aptos;
+        
+        // Deserialize the transaction
+        const deserializer = new Deserializer(transactionBytes);
+        const transaction = SimpleTransaction.deserialize(deserializer);
+        
+        // Sign as fee payer
+        const feePayerAuth = await aptos.transaction.signAsFeePayer({
+          signer: account,
+          transaction
+        });
+        
+        // Submit with both signatures
+        const pendingTx = await aptos.transaction.submit.simple({
+          transaction,
+          senderAuthenticator: {
+            bcsToBytes: () => userAuthBytes
+          } as any,
+          feePayerAuthenticator: feePayerAuth
+        });
+        
+        console.log('   ✅ Sponsored transaction submitted!');
+        console.log('   📋 Transaction hash:', pendingTx.hash);
+        console.log('   💰 User\'s APT is being used for escrow');
+        console.log('   ⛽ Resolver paid only gas fees');
+        
+        // Wait for confirmation
+        const executedTx = await aptos.waitForTransaction({
+          transactionHash: pendingTx.hash,
+          options: { checkSuccess: true }
+        });
+        
+        if (executedTx.success) {
+          // Extract escrow ID
+          const escrowIdBytes = signedOrder.orderMessage.escrow_id;
+          const escrowId = '0x' + escrowIdBytes.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+          
+          // Emit success event
+          this.socket.emit('escrow:source:created', {
+            orderId,
+            escrowId,
+            chain: 'APTOS',
+            txHash: pendingTx.hash,
+            amount: order.fromAmount,
+            secretHash: order.secretHash || signedOrder.secretHash,
+            userFunded: true // Flag to indicate user's APT was used
+          });
+          
+          // Check if both escrows exist
+          const monitoringKey = `${orderId}-${order.fromToken}-${order.toToken}`;
+          const fill = this.monitoringFills.get(monitoringKey);
+          if (fill && fill.destinationEscrowId) {
+            console.log('   🔐 Both escrows created, requesting secret from user...');
+            this.pendingSecretReveals.set(orderId, {
+              order,
+              fill,
+              sourceEscrowId: escrowId,
+              destinationEscrowId: fill.destinationEscrowId
+            });
+            
+            this.socket.emit('secret:request', {
+              orderId,
+              message: 'Both escrows confirmed on-chain. Please reveal your secret to complete the swap.'
+            });
+          }
+        }
+        
+      } catch (error: any) {
+        console.error('   ❌ Failed to process sponsored transaction:', error);
+        throw error;
+      }
+      
+    } catch (error) {
+      console.error('Failed to handle sponsored transaction V2:', error);
       this.socket.emit('order:error', {
         orderId: signedOrder.orderId,
         error: 'Failed to create APT escrow with sponsored transaction',
