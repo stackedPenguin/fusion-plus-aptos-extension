@@ -33,7 +33,7 @@ const TOKEN_ICONS = {
 };
 
 interface SwapStatus {
-  stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'approving_token' | 'submitting' | 'waiting' | 'escrow_created' | 'completed' | 'error' | 'processing';
+  stage: 'idle' | 'wrapping_eth' | 'approving_weth' | 'approving_token' | 'submitting' | 'waiting' | 'escrow_created' | 'claiming' | 'manual_claim' | 'completed' | 'error' | 'processing';
   message: string;
   orderId?: string;
   escrowHash?: string;
@@ -366,10 +366,18 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       console.log('🔌 Socket connected:', socket.connected);
       console.log('🆔 Socket ID:', socket.id);
       
+      // Debug: Log all socket events
+      const originalEmit = socket.emit;
+      socket.emit = function(...args: any[]) {
+        console.log('📤 Socket emit:', args[0], args[1]);
+        return originalEmit.apply(socket, args);
+      };
+      
       // Listen for order errors
       socket.on('order:error', (data: any) => {
+        console.error('🚨 Received order:error event:', data);
         if (data.orderId === orderId) {
-          console.error('Order error:', data);
+          console.error('Order error for our order:', data);
           setSwapStatus({
             stage: 'error',
             message: `❌ ${data.reason || data.error}`,
@@ -379,8 +387,14 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         }
       });
       
+      // Store destination escrow data for later withdrawal
+      let destinationEscrowInfo: any = null;
+      
       socket.on('escrow:destination:created', async (data: any) => {
+        console.log('📦 Received escrow:destination:created event:', data);
         if (data.orderId === orderId) {
+          // Store the destination escrow info for later withdrawal
+          destinationEscrowInfo = data;
           // Format amount based on destination chain
           let amount: string;
           let tokenSymbol: string;
@@ -750,19 +764,67 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         }
       });
       
-      // Listen for source withdrawal (resolver claims WETH)
+      // Listen for source withdrawal (resolver withdraws user's APT)
       socket.on('escrow:source:withdrawn', async (data: any) => {
         if (data.orderId === orderId) {
-          await logger.logSwapStep('💰 Resolver withdrew user WETH', 'Source escrow completed');
-          // Force balance refresh after withdrawal
-          fetchWethBalance();
-          window.dispatchEvent(new Event('refreshBalances'));
-          // Multiple attempts to ensure balance is updated
-          setTimeout(() => {
-            fetchWethBalance();
-            window.dispatchEvent(new Event('refreshBalances'));
-          }, 1500);
-          setTimeout(() => fetchWethBalance(), 5000);
+          await logger.logSwapStep('💰 Resolver withdrew user APT', 'Now claiming WETH...');
+          
+          // For APT to WETH swaps, user needs to withdraw WETH from destination escrow
+          const secretData = (window as any).__fusionPlusSecret;
+          if (destinationEscrowInfo && destinationEscrowInfo.chain === 'ETHEREUM' && secretData?.secret) {
+            try {
+              setSwapStatus({ stage: 'claiming', message: 'Claiming your WETH...' });
+              
+              // Use the Ethereum signer to withdraw
+              const escrowAddress = CONTRACTS.ETHEREUM.ESCROW;
+              const escrowAbi = [
+                'function withdraw(bytes32 _escrowId, bytes32 _secret)'
+              ];
+              
+              const escrowContract = new ethers.Contract(escrowAddress, escrowAbi, ethSigner!);
+              
+              console.log('🔓 Withdrawing WETH from destination escrow...');
+              console.log('   Escrow ID:', destinationEscrowInfo.escrowId);
+              console.log('   Secret:', secretData.secret);
+              
+              const withdrawTx = await escrowContract.withdraw(
+                destinationEscrowInfo.escrowId,
+                secretData.secret
+              );
+              
+              console.log('📤 Withdrawal transaction sent:', withdrawTx.hash);
+              await logger.logSwapStep('📤 WETH withdrawal initiated', `TxHash: ${withdrawTx.hash}`);
+              
+              const receipt = await withdrawTx.wait();
+              console.log('✅ WETH withdrawal confirmed!');
+              
+              await logger.logSwapStep('✅ WETH claimed successfully!', `You received ~${(parseFloat(destinationEscrowInfo.amount) / 1e18).toFixed(6)} WETH`);
+              
+              setSwapStatus({ 
+                stage: 'completed', 
+                message: `Swap completed! You received ${(parseFloat(destinationEscrowInfo.amount) / 1e18).toFixed(6)} WETH` 
+              });
+              
+              // Force balance refresh
+              fetchWethBalance();
+              window.dispatchEvent(new Event('refreshBalances'));
+              setTimeout(() => {
+                fetchWethBalance();
+                window.dispatchEvent(new Event('refreshBalances'));
+              }, 3000);
+              setTimeout(() => fetchWethBalance(), 5000);
+              
+            } catch (error) {
+              console.error('Failed to withdraw WETH:', error);
+              await logger.logSwapStep('❌ Failed to auto-withdraw WETH', error instanceof Error ? error.message : 'Unknown error');
+              
+              // Show manual withdrawal instructions
+              setSwapStatus({ 
+                stage: 'manual_claim', 
+                message: `Manual claim required. Escrow: ${destinationEscrowInfo.escrowId.slice(0, 10)}... Secret: ${secretData.secret.slice(0, 10)}...` 
+              });
+            }
+          }
         }
       });
 

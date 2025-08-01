@@ -5,6 +5,7 @@ import { ChainServiceSimple } from './ChainServiceSimple';
 import { PriceService } from './PriceService';
 import { PermitService } from './PermitService';
 import { WETHService } from './WETHService';
+import { BalanceTracker } from './BalanceTracker';
 import dotenv from 'dotenv';
 import { createHash, randomBytes } from 'crypto';
 import { Deserializer, SimpleTransaction, RawTransaction, AccountAuthenticator } from '@aptos-labs/ts-sdk';
@@ -61,6 +62,7 @@ export class ResolverServiceV2 {
   private aptosAddress: string;
   private ethereumProvider: ethers.Provider;
   private aptosProvider: any; // Aptos client
+  private balanceTracker: BalanceTracker;
   
   // Track active orders
   private activeOrders: Map<string, Order> = new Map();
@@ -88,6 +90,14 @@ export class ResolverServiceV2 {
     // Initialize providers for monitoring
     this.ethereumProvider = new ethers.JsonRpcProvider(
       process.env.ETHEREUM_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
+    );
+    
+    // Initialize balance tracker
+    const wethAddress = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+    this.balanceTracker = new BalanceTracker(
+      this.ethereumProvider,
+      this.ethereumAddress,
+      wethAddress
     );
     
     // Connect to order engine WebSocket
@@ -256,11 +266,71 @@ export class ResolverServiceV2 {
 
       console.log(`   ✅ Profitable and have balance, creating destination escrow`);
       
+      // Track balances before creating escrow
+      await this.balanceTracker.trackBalanceChange('Before creating destination escrow');
+      
       // Create destination escrow only (proper Fusion+ flow)
       await this.createDestinationEscrow(order);
       
-    } catch (error) {
-      console.error(`Error processing order ${order.id}:`, error);
+      // Track balances after creating escrow
+      await this.balanceTracker.trackBalanceChange('After creating destination escrow');
+      
+    } catch (error: any) {
+      console.error(`\n❌ ERROR processing order ${order.id}:`, error);
+      console.error(`   📊 Error details:`, {
+        message: error.message,
+        code: error.code,
+        name: error.name
+      });
+      
+      // Check if this is a balance issue
+      if (error.message && (error.message.includes('Insufficient') || error.message.includes('balance'))) {
+        console.error(`\n${'='.repeat(60)}`);
+        console.error(`⚠️  BALANCE ISSUE DETECTED - SWAP CANNOT PROCEED`);
+        console.error(`${'='.repeat(60)}`);
+        console.error(`\n💡 WHY THIS SWAP FAILED:`);
+        console.error(`   The resolver needs to hold destination assets (WETH) upfront`);
+        console.error(`   to create escrows in the Fusion+ protocol.`);
+        console.error(`\n📝 WHY IT WORKED BEFORE BUT NOT NOW:`);
+        console.error(`   1. First swap consumed resolver's WETH balance`);
+        console.error(`   2. Resolver created WETH escrow for user (locked WETH)`);
+        console.error(`   3. Resolver now has insufficient WETH for new swaps`);
+        console.error(`   4. Each swap reduces available WETH until refunded`);
+        
+        // Show current balances
+        try {
+          const wethBalance = await this.chainService.getEthereumBalance(
+            this.ethereumAddress,
+            order.toToken
+          );
+          const ethBalance = await this.ethereumProvider.getBalance(this.ethereumAddress);
+          const requiredAmount = order.toChain === 'ETHEREUM' ? order.minToAmount : '0';
+          
+          console.error(`\n💰 RESOLVER BALANCE STATUS:`);
+          console.error(`   ETH Balance:  ${ethers.formatEther(ethBalance)} ETH`);
+          console.error(`   WETH Balance: ${ethers.formatEther(wethBalance)} WETH`);
+          console.error(`   Required:     ${ethers.formatEther(requiredAmount)} WETH`);
+          console.error(`   Shortfall:    ${ethers.formatEther(BigInt(requiredAmount) - wethBalance)} WETH`);
+          
+          // Estimate capacity
+          const avgSwapSize = ethers.parseEther('0.01');
+          const possibleSwaps = wethBalance / avgSwapSize;
+          console.error(`\n📊 CAPACITY: Can handle ~${possibleSwaps} more small swaps`);
+          
+          console.error(`\n🔧 SOLUTION:`);
+          console.error(`   1. Fund resolver with more WETH:`);
+          console.error(`      - Run: cd /Users/wei/projects/fusion-plus-aptos-extension`);
+          console.error(`      - Run: node scripts/wrap-eth-to-weth.js`);
+          console.error(`   2. Or send WETH directly to: ${this.ethereumAddress}`);
+          console.error(`   3. For production: Implement liquidity pool system`);
+          
+          console.error(`\n⏰ IMMEDIATE ACTION: Run health check`);
+          console.error(`   node scripts/monitor-resolver-health.js`);
+          console.error(`${'='.repeat(60)}\n`);
+        } catch (e) {
+          // Ignore balance check errors
+        }
+      }
     } finally {
       this.isProcessing.delete(order.id);
     }
@@ -378,6 +448,11 @@ export class ResolverServiceV2 {
 
   private async createDestinationEscrow(order: Order) {
     console.log(`\n📦 Creating destination escrow for order ${order.id}`);
+    console.log(`   🕐 Started at: ${new Date().toISOString()}`);
+    console.log(`   📊 Order details:`);
+    console.log(`      - From: ${order.fromChain} ${order.fromToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : order.fromToken}`);
+    console.log(`      - To: ${order.toChain} ${order.toToken === ethers.ZeroAddress ? 'ETH' : order.toToken}`);
+    console.log(`      - Amount: ${order.fromAmount} -> ${order.minToAmount}`);
     
     // Check if order allows partial fills
     if (order.partialFillAllowed) {
@@ -499,8 +574,35 @@ export class ResolverServiceV2 {
       
       let destTxHash: string;
       
+      console.log(`\n   🎯 Creating destination escrow:`);
+      console.log(`      - Chain: ${order.toChain}`);
+      console.log(`      - Escrow ID: ${escrowId}`);
+      console.log(`      - Fill amount: ${fillAmount}`);
+      console.log(`      - Secret hash: ${secretHash}`);
+      
       if (order.toChain === 'ETHEREUM') {
-        console.log(`   Creating Ethereum escrow for user ${order.receiver}`);
+        console.log(`   🌐 Creating Ethereum escrow for user ${order.receiver}`);
+        
+        // Check resolver balance one more time before creating escrow
+        const currentBalance = await this.chainService.getEthereumBalance(
+          this.ethereumAddress,
+          order.toToken
+        );
+        const formattedBalance = ethers.formatEther(currentBalance);
+        const formattedNeeded = ethers.formatEther(fillAmount);
+        
+        console.log(`   💰 Final balance check:`);
+        console.log(`      - Resolver ${order.toToken === ethers.ZeroAddress ? 'ETH' : 'token'} balance: ${formattedBalance}`);
+        console.log(`      - Required for escrow: ${formattedNeeded}`);
+        
+        if (currentBalance < BigInt(fillAmount)) {
+          console.error(`   ❌ INSUFFICIENT BALANCE - Cannot create escrow!`);
+          console.error(`      Need ${formattedNeeded} but only have ${formattedBalance}`);
+          throw new Error(`Insufficient ${order.toToken === ethers.ZeroAddress ? 'ETH' : 'token'} balance for escrow`);
+        }
+        
+        console.log(`   ✅ Balance sufficient, proceeding with escrow creation...`);
+        
         destTxHash = await this.chainService.createEthereumEscrow(
           escrowId,
           order.receiver, // User is beneficiary on destination
@@ -535,7 +637,8 @@ export class ResolverServiceV2 {
       });
       
       // Broadcast to user that destination escrow is ready
-      this.socket.emit('escrow:destination:created', {
+      console.log(`\n   📡 Emitting escrow:destination:created event...`);
+      const eventData = {
         orderId: order.id,
         escrowId,
         chain: order.toChain,
@@ -545,9 +648,14 @@ export class ResolverServiceV2 {
         amount: fillAmount,
         isPartialFill: fillRatio < 1.0,
         fillRatio
-      });
+      };
+      console.log(`   📊 Event data:`, JSON.stringify(eventData, null, 2));
+      
+      this.socket.emit('escrow:destination:created', eventData);
       
       console.log(`   ✅ Destination escrow created: ${escrowId}`);
+      console.log(`   ✅ Event emitted to frontend`);
+      console.log(`   🕐 Completed at: ${new Date().toISOString()}`);
       
       // Check if this is a WETH order that we should handle automatically
       const WETH_ADDRESS = process.env.WETH_ADDRESS || '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
@@ -833,6 +941,9 @@ export class ResolverServiceV2 {
       
       console.log('   ✅ Successfully withdrew from source escrow!');
       
+      // Track balance after withdrawal
+      await this.balanceTracker.trackBalanceChange('After withdrawing from source escrow');
+      
       // Update fill status to prevent double withdrawal
       await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_WITHDRAWN');
       
@@ -938,6 +1049,9 @@ export class ResolverServiceV2 {
       const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
       
       console.log('   ✅ Successfully withdrew from source escrow!');
+      
+      // Track balance after withdrawal
+      await this.balanceTracker.trackBalanceChange('After withdrawing from source escrow');
       
       // Update fill status to prevent double withdrawal
       await this.updateFillStatus(fill.orderId, fill.id, 'SOURCE_WITHDRAWN');

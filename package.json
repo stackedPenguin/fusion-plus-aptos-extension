@@ -37,6 +37,7 @@
     "dotenv": "^17.2.1",
     "ethers": "^6.15.0",
     "socket.io-client": "^4.8.1",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "typescript": "^5.9.2"
   }
 }

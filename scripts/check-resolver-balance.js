@@ -1,30 +1,37 @@
-const { AptosClient } = require('aptos');
-require('dotenv').config({ path: '../backend/resolver/.env' });
+const { ethers } = require('ethers');
+require('dotenv').config({ path: './backend/resolver/.env' });
 
-async function checkResolverBalance() {
-  const client = new AptosClient('https://fullnode.testnet.aptoslabs.com');
-  
-  const resolverAddress = process.env.APTOS_RESOLVER_ADDRESS || '0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532';
-  
-  console.log('Checking resolver balance...');
-  console.log('Resolver address:', resolverAddress);
-  
-  try {
-    const resources = await client.getAccountResources(resolverAddress);
-    const coinStore = resources.find(r => r.type === '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
+async function checkBalance() {
+    const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
+    const resolverAddress = process.env.ETHEREUM_RESOLVER_ADDRESS;
+    const wethAddress = process.env.WETH_ADDRESS;
     
-    if (coinStore) {
-      const balance = coinStore.data.coin.value;
-      console.log('APT Balance:', (parseInt(balance) / 100000000).toFixed(8), 'APT');
-      console.log('Raw balance:', balance);
-      console.log('Need for escrow: 0.201 APT (20100000 octas)');
-      console.log('Has enough?', parseInt(balance) >= 20100000);
-    } else {
-      console.log('No coin store found');
+    console.log('Checking resolver balance...');
+    console.log('Resolver address:', resolverAddress);
+    
+    // Check ETH balance
+    const ethBalance = await provider.getBalance(resolverAddress);
+    console.log('ETH balance:', ethers.formatEther(ethBalance), 'ETH');
+    
+    // Check WETH balance
+    const wethAbi = ['function balanceOf(address) view returns (uint256)'];
+    const wethContract = new ethers.Contract(wethAddress, wethAbi, provider);
+    const wethBalance = await wethContract.balanceOf(resolverAddress);
+    console.log('WETH balance:', ethers.formatEther(wethBalance), 'WETH');
+    
+    // Check if resolver needs funding
+    const minEthNeeded = ethers.parseEther('0.01'); // For gas + safety deposit
+    const minWethNeeded = ethers.parseEther('0.1'); // For test swaps
+    
+    if (ethBalance < minEthNeeded) {
+        console.log('\n⚠️  Resolver needs more ETH for gas!');
+        console.log('   Need at least:', ethers.formatEther(minEthNeeded), 'ETH');
     }
-  } catch (error) {
-    console.error('Failed to check balance:', error.message);
-  }
+    
+    if (wethBalance < minWethNeeded) {
+        console.log('\n⚠️  Resolver needs more WETH for swaps!');
+        console.log('   Need at least:', ethers.formatEther(minWethNeeded), 'WETH');
+    }
 }
 
-checkResolverBalance().catch(console.error);
+checkBalance().catch(console.error);

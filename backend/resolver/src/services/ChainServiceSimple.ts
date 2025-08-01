@@ -45,6 +45,11 @@ export class ChainServiceSimple {
     safetyDeposit: string,
     depositor?: string // Optional depositor for createEscrowFor
   ): Promise<string> {
+    console.log(`\n🔄 [ChainService] Creating Ethereum Escrow`);
+    console.log(`   📋 Escrow ID: ${escrowId}`);
+    console.log(`   👤 Beneficiary: ${beneficiary}`);
+    console.log(`   🪙 Token: ${token === ethers.ZeroAddress ? 'ETH' : token}`);
+    console.log(`   💰 Amount: ${ethers.formatEther(amount)} ${token === ethers.ZeroAddress ? 'ETH' : 'tokens'}`);
     const escrowAbi = [
       'function createEscrow(bytes32 _escrowId, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable',
       'function createEscrowFor(bytes32 _escrowId, address _depositor, address _beneficiary, address _token, uint256 _amount, bytes32 _hashlock, uint256 _timelock) payable'
@@ -68,7 +73,7 @@ export class ChainServiceSimple {
     console.log(`   Depositor: ${depositor || 'N/A'}`);
     console.log(`   Beneficiary: ${beneficiary}`);
 
-    let tx;
+    let tx: any;
     if (depositor) {
       // Use createEscrowFor when depositor is specified (Fusion+ flow)
       if (token === ethers.ZeroAddress) {
@@ -126,6 +131,50 @@ export class ChainServiceSimple {
         // ERC20 escrow - still needs safety deposit in ETH
         console.log(`   💰 Creating ERC20 escrow, safety deposit required`);
         try {
+          // Get current gas price and add 20% buffer
+          const feeData = await this.ethereum.provider.getFeeData();
+          const gasPrice = feeData.gasPrice ? (feeData.gasPrice * 120n / 100n) : undefined;
+          console.log(`   ⛽ Gas price: ${gasPrice ? ethers.formatUnits(gasPrice, 'gwei') : 'auto'} gwei`);
+          
+          // Check resolver's balance
+          const resolverBalance = await this.ethereum.provider.getBalance(this.ethereum.signer.address);
+          console.log(`   💳 Resolver ETH balance: ${ethers.formatEther(resolverBalance)} ETH`);
+          
+          // Check if we have enough ETH for gas + safety deposit
+          const estimatedGas = ethers.parseEther('0.01'); // Rough estimate
+          const totalNeeded = ethers.getBigInt(safetyDeposit) + estimatedGas;
+          
+          if (resolverBalance < totalNeeded) {
+            console.error(`   ❌ Insufficient ETH for gas + safety deposit`);
+            console.error(`   💸 Need: ${ethers.formatEther(totalNeeded)} ETH`);
+            console.error(`   💰 Have: ${ethers.formatEther(resolverBalance)} ETH`);
+            throw new Error(`Insufficient ETH balance`);
+          }
+          
+          // Check WETH balance of resolver
+          if (token !== ethers.ZeroAddress) {
+            const tokenAbi = ['function balanceOf(address) view returns (uint256)'];
+            const tokenContract = new ethers.Contract(token, tokenAbi, this.ethereum.provider);
+            const tokenBalance = await tokenContract.balanceOf(this.ethereum.signer.address);
+            console.log(`   💎 Resolver token balance: ${ethers.formatEther(tokenBalance)} (${token})`);
+            
+            if (tokenBalance < ethers.getBigInt(amount)) {
+              console.error(`   ❌ Insufficient token balance`);
+              console.error(`   💸 Need: ${ethers.formatEther(amount)}`);
+              console.error(`   💰 Have: ${ethers.formatEther(tokenBalance)}`);
+              throw new Error(`Insufficient token balance`);
+            }
+          }
+          
+          console.log(`   📝 Transaction parameters:`);
+          console.log(`      - escrowId: ${escrowId}`);
+          console.log(`      - beneficiary: ${beneficiary}`);
+          console.log(`      - token: ${token}`);
+          console.log(`      - amount: ${ethers.formatEther(amount)}`);
+          console.log(`      - hashlock: ${hashlock}`);
+          console.log(`      - timelock: ${new Date(timelock * 1000).toISOString()}`);
+          console.log(`      - value (safety deposit): ${ethers.formatEther(safetyDeposit)} ETH`);
+          
           tx = await escrowContract.createEscrow(
             escrowId,
             beneficiary,
@@ -133,8 +182,40 @@ export class ChainServiceSimple {
             amount,
             hashlock,
             timelock,
-            { value: safetyDeposit } // Safety deposit required even for ERC20
+            { 
+              value: safetyDeposit,
+              gasPrice: gasPrice
+            }
           );
+          console.log(`   📤 Transaction sent! Hash: ${tx.hash}`);
+          console.log(`   ⏳ Waiting for confirmation...`);
+          
+          // Start monitoring for confirmation
+          const startTime = Date.now();
+          let confirmed = false;
+          const checkInterval = setInterval(async () => {
+            try {
+              const receipt = await this.ethereum.provider.getTransactionReceipt(tx.hash);
+              if (receipt) {
+                clearInterval(checkInterval);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`   ✅ Transaction confirmed after ${elapsed}s`);
+                console.log(`   ⛽ Gas used: ${receipt.gasUsed.toString()}`);
+                console.log(`   📦 Block: ${receipt.blockNumber}`);
+                confirmed = true;
+              }
+            } catch (e) {
+              // Ignore errors during polling
+            }
+          }, 3000);
+          
+          // Timeout after 2 minutes
+          setTimeout(() => {
+            if (!confirmed) {
+              clearInterval(checkInterval);
+              console.log(`   ⚠️ Transaction confirmation timeout after 2 minutes`);
+            }
+          }, 120000);
         } catch (error: any) {
           console.error(`   ❌ Transaction failed:`, error.message);
           if (error.message.includes('insufficient funds')) {
@@ -147,8 +228,21 @@ export class ChainServiceSimple {
       }
     }
 
-    const receipt = await tx.wait();
-    return receipt.hash;
+    console.log(`   ⏳ Waiting for transaction receipt...`);
+    const receiptStartTime = Date.now();
+    
+    try {
+      const receipt = await tx.wait();
+      const elapsed = ((Date.now() - receiptStartTime) / 1000).toFixed(1);
+      console.log(`   ✅ Transaction confirmed after ${elapsed}s!`);
+      console.log(`   ⛽ Gas used: ${receipt.gasUsed.toString()}`);
+      console.log(`   📦 Block number: ${receipt.blockNumber}`);
+      console.log(`   ✨ Escrow created successfully!`);
+      return receipt.hash;
+    } catch (error: any) {
+      console.error(`   ❌ Transaction failed during confirmation:`, error.message);
+      throw error;
+    }
   }
 
   async withdrawEthereumEscrow(escrowId: string, secret: string): Promise<string> {
