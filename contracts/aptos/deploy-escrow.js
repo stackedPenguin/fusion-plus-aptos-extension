@@ -1,104 +1,52 @@
-const { AptosClient, AptosAccount, HexString } = require('aptos');
-const fs = require('fs');
+const { execSync } = require('child_process');
 const path = require('path');
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
-require('dotenv').config({ path: '../../backend/resolver/.env' });
+const fs = require('fs');
 
-async function deployEscrowModule() {
-  const client = new AptosClient('https://fullnode.testnet.aptoslabs.com');
-  
-  // Get the private key from environment
-  let privateKey = process.env.APTOS_PRIVATE_KEY;
-  if (!privateKey) {
-    throw new Error('APTOS_PRIVATE_KEY not found in environment');
-  }
-  
-  // Remove the "ed25519-priv-" prefix if present
-  if (privateKey.startsWith('ed25519-priv-')) {
-    privateKey = privateKey.replace('ed25519-priv-', '');
-  }
-  
-  // Remove 0x prefix if present
-  if (privateKey.startsWith('0x')) {
-    privateKey = privateKey.substring(2);
-  }
-
-  // Create account from private key
-  const account = new AptosAccount(new HexString(privateKey).toUint8Array());
-  const address = account.address().hex();
-  
-  console.log('Deploying from address:', address);
-  
-  // Check account balance
-  const resources = await client.getAccountResources(account.address());
-  const accountResource = resources.find((r) => r.type === '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
-  const balance = accountResource ? parseInt(accountResource.data.coin.value) / 100000000 : 0;
-  console.log('Account balance:', balance, 'APT');
-  
-  if (balance < 0.1) {
-    console.log('Warning: Low balance. You might need to fund your account for deployment.');
-  }
-
-  // Update Move.toml with the actual deployer address
-  const moveTomlPath = path.join(__dirname, 'Move.toml');
-  let moveToml = fs.readFileSync(moveTomlPath, 'utf8');
-  moveToml = moveToml.replace(/fusion_plus = ".*"/g, `fusion_plus = "${address}"`);
-  moveToml = moveToml.replace(/escrow_addr = ".*"/g, `escrow_addr = "${address}"`);
-  moveToml = moveToml.replace(/FusionPlusAptos = ".*"/g, `FusionPlusAptos = "${address}"`);
-  fs.writeFileSync(moveTomlPath, moveToml);
-  console.log('Updated Move.toml with deployer address');
-
-  // Compile the module
-  console.log('\nCompiling Move module...');
+async function deployEscrow() {
   try {
-    const { stdout: compileOut } = await execPromise(
-      `aptos move compile --named-addresses fusion_plus=${address},escrow_addr=${address}`,
-      { cwd: __dirname }
-    );
-    console.log('Compilation successful!');
-  } catch (error) {
-    console.error('Compilation failed:', error);
-    throw error;
-  }
-
-  // Deploy using CLI (more reliable for package deployment)
-  console.log('\nDeploying module to Aptos testnet...');
-  
-  // First, create a temporary profile
-  const profileName = `temp_deploy_${Date.now()}`;
-  
-  try {
-    // Initialize profile with private key
-    await execPromise(
-      `aptos init --profile ${profileName} --network testnet --private-key ${privateKey} --assume-yes`,
-      { cwd: __dirname }
-    );
+    console.log('Building Move package...');
+    
+    // Change to the contracts/aptos directory
+    const contractsDir = path.join(__dirname);
+    process.chdir(contractsDir);
+    
+    // Build the package
+    console.log('Running: aptos move compile');
+    execSync('aptos move compile', { stdio: 'inherit' });
     
     // Deploy the package
-    const { stdout: deployOut } = await execPromise(
-      `aptos move publish --profile ${profileName} --named-addresses fusion_plus=${address},escrow_addr=${address} --assume-yes`,
-      { cwd: __dirname }
-    );
+    console.log('\nDeploying to testnet...');
+    console.log('Running: aptos move publish');
     
-    console.log('Deployment output:', deployOut);
-    console.log('\nModule deployed successfully!');
-    console.log('\nEscrow module address:', address);
-    console.log('\nUpdate your frontend config with:');
-    console.log(`REACT_APP_APTOS_ESCROW_MODULE=${address}`);
+    // Get private key from the new account
+    let privateKey;
+    try {
+      const accountData = JSON.parse(fs.readFileSync(path.join(__dirname, 'new-escrow-account.json'), 'utf8'));
+      // Use the first account that was generated
+      privateKey = 'ed25519-priv-0x6f96d196c83b19ed4d051edf71ebb4782443c429ef82ae73cb7a9eb08e339c59';
+      console.log('Using account:', '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca');
+    } catch (err) {
+      throw new Error('Could not read new account details');
+    }
     
-    // Clean up profile
-    await execPromise(`aptos config remove-profile --profile ${profileName}`);
+    // Remove prefixes if present
+    if (privateKey.startsWith('ed25519-priv-')) {
+      privateKey = privateKey.replace('ed25519-priv-', '');
+    }
+    if (privateKey.startsWith('0x')) {
+      privateKey = privateKey.substring(2);
+    }
+    
+    // Deploy using the new account's private key
+    execSync(`aptos move publish --assume-yes --url https://fullnode.testnet.aptoslabs.com/v1 --private-key ${privateKey}`, { stdio: 'inherit' });
+    
+    console.log('\nDeployment complete!');
+    console.log('Note: The module will be deployed at your account address');
     
   } catch (error) {
-    console.error('Deployment failed:', error);
-    // Try to clean up profile even if deployment failed
-    try {
-      await execPromise(`aptos config remove-profile --profile ${profileName}`);
-    } catch (e) {}
-    throw error;
+    console.error('Error deploying contract:', error);
+    process.exit(1);
   }
 }
 
-deployEscrowModule().catch(console.error);
+deployEscrow();

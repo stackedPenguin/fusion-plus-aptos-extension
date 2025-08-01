@@ -5,6 +5,8 @@ import { PriceService } from '../services/PriceService';
 import { WETHService } from '../services/WETHService';
 import { AssetFlowLogger } from '../services/AssetFlowLogger';
 import { CONTRACTS } from '../config/contracts';
+import { Serializer } from '@aptos-labs/ts-sdk';
+import { SponsoredTransactionService } from '../utils/sponsoredTransaction';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -217,7 +219,31 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           const accountInfo = await (window as any).aptos.account();
           console.log('Account info:', accountInfo);
           
-          // Create a human-readable message for signing
+          // Serialize the order message using BCS for signature
+          const serializer = new Serializer();
+          
+          // Serialize OrderMessage struct fields in order
+          // escrow_id: vector<u8>
+          serializer.serializeBytes(new Uint8Array(orderMessage.escrow_id));
+          // depositor: address
+          serializer.serializeFixedBytes(ethers.getBytes(orderMessage.depositor));
+          // beneficiary: address  
+          serializer.serializeFixedBytes(ethers.getBytes(orderMessage.beneficiary));
+          // amount: u64
+          serializer.serializeU64(BigInt(orderMessage.amount));
+          // hashlock: vector<u8>
+          serializer.serializeBytes(new Uint8Array(orderMessage.hashlock));
+          // timelock: u64
+          serializer.serializeU64(BigInt(orderMessage.timelock));
+          // nonce: u64
+          serializer.serializeU64(BigInt(orderMessage.nonce));
+          // expiry: u64
+          serializer.serializeU64(BigInt(orderMessage.expiry));
+          
+          const bcsMessage = serializer.toUint8Array();
+          console.log('BCS serialized message:', ethers.hexlify(bcsMessage));
+          
+          // Create a human-readable message for the wallet UI
           const readableMessage = `Fusion+ Swap Order:
 From: ${(parseInt(orderData.fromAmount) / 100000000).toFixed(4)} APT
 To: ${orderData.minToAmount} WETH
@@ -226,9 +252,11 @@ Order ID: ${orderData.nonce}
 Nonce: ${nonce}
 Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           
-          // Sign the message using Aptos wallet
+          // For now, we'll use signMessage but we need to handle the prefix in the contract
+          // The wallet adds "APTOS\nmessage: " prefix and signs message as text
+          // TODO: Consider using signTransaction for raw bytes signing
           const signatureResponse = await (window as any).aptos.signMessage({
-            message: readableMessage,
+            message: readableMessage,  // Sign human-readable message for now
             nonce: nonce.toString()
           });
           
@@ -375,18 +403,67 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
               try {
                 // Send signed order to resolver via order engine
                 const socket = (orderService as any).socket;
-                socket.emit('order:signed', {
-                  orderId: data.orderId,
-                  orderMessage: signedIntent.orderMessage,
-                  signature: signedIntent.signature,
-                  publicKey: signedIntent.publicKey,
-                  fullMessage: signedIntent.fullMessage,
-                  fromChain: 'APTOS',
-                  toChain: 'ETHEREUM',
-                  fromAmount: currentOrderData.fromAmount,
-                  toAmount: currentOrderData.minToAmount,
-                  secretHash: userSecretHash // Send user's secret hash
-                });
+                // Get the user's secret hash from stored data
+                const userSecretHash = (window as any).__fusionPlusSecret?.secretHash || data.secretHash;
+                
+                // NEW: Use sponsored transaction approach where user's APT is used
+                try {
+                  const sponsoredService = new SponsoredTransactionService();
+                  const escrowParams = {
+                    escrowId: signedIntent.orderMessage.escrow_id,
+                    beneficiary: CONTRACTS.RESOLVER.APTOS,
+                    amount: currentOrderData.fromAmount,
+                    hashlock: signedIntent.orderMessage.hashlock,
+                    timelock: signedIntent.orderMessage.timelock,
+                    safetyDeposit: '100000', // 0.001 APT
+                    resolverAddress: CONTRACTS.RESOLVER.APTOS
+                  };
+                  
+                  // Create the transaction for user to sign
+                  const userTransaction = await sponsoredService.createUserFundedEscrowTransaction(
+                    currentOrderData.maker,
+                    escrowParams
+                  );
+                  
+                  await logger.logSwapStep('💰 Creating escrow with YOUR APT', 'Resolver will pay gas fees only');
+                  
+                  // Have user sign the transaction (their APT will be used)
+                  const signedTransaction = await (window as any).aptos.signTransaction(userTransaction);
+                  
+                  // Send to resolver for sponsorship
+                  socket.emit('order:signed:sponsored', {
+                    orderId: data.orderId,
+                    orderMessage: signedIntent.orderMessage,
+                    signature: signedIntent.signature,
+                    publicKey: signedIntent.publicKey,
+                    fullMessage: signedIntent.fullMessage,
+                    fromChain: 'APTOS',
+                    toChain: 'ETHEREUM',
+                    fromAmount: currentOrderData.fromAmount,
+                    toAmount: currentOrderData.minToAmount,
+                    secretHash: userSecretHash,
+                    // New sponsored transaction data
+                    sponsoredTransaction: {
+                      rawTransaction: ethers.hexlify(signedTransaction.rawTransaction),
+                      userAuthenticator: ethers.hexlify(signedTransaction.authenticator.bcsToBytes())
+                    }
+                  });
+                } catch (sponsorError: any) {
+                  console.error('Failed to create sponsored transaction, falling back to old method:', sponsorError);
+                  // Fallback to old method
+                  socket.emit('order:signed', {
+                    orderId: data.orderId,
+                    orderMessage: signedIntent.orderMessage,
+                    signature: signedIntent.signature,
+                    publicKey: signedIntent.publicKey,
+                    fullMessage: signedIntent.fullMessage,
+                    fromChain: 'APTOS',
+                    toChain: 'ETHEREUM',
+                    fromAmount: currentOrderData.fromAmount,
+                    toAmount: currentOrderData.minToAmount,
+                    secretHash: userSecretHash // Send user's secret hash
+                  });
+                }
                 
                 await logger.logSwapStep('✅ Fusion+ order signed', 'Waiting for resolver to create escrows (gasless)');
                 
