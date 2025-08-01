@@ -32,8 +32,16 @@ stop_services() {
 
 # Function to check if a port is in use
 check_port() {
-    lsof -ti:$1 > /dev/null 2>&1
-    return $?
+    # Check multiple ways to ensure port is detected
+    if lsof -i:$1 2>/dev/null | grep -q LISTEN; then
+        return 0
+    elif netstat -an 2>/dev/null | grep "[:.]$1 " | grep -q LISTEN; then
+        return 0
+    elif ss -tln 2>/dev/null | grep -q ":$1 "; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Handle script arguments
@@ -65,13 +73,23 @@ echo "$ORDER_ENGINE_PID" >> "$PID_FILE"
 echo "   Order Engine PID: $ORDER_ENGINE_PID"
 
 # Wait and check if order engine started
-sleep 3
-if check_port 3001; then
-    echo "   ✅ Order Engine started successfully"
-else
-    echo "   ❌ Order Engine failed to start. Check order-engine.log"
-    exit 1
-fi
+echo "   Waiting for Order Engine to start..."
+for i in {1..20}; do
+    if check_port 3001; then
+        echo "   ✅ Order Engine started successfully"
+        break
+    fi
+    if [ $i -eq 20 ]; then
+        echo "   ❌ Order Engine failed to start. Check order-engine.log"
+        echo "   Debug: Checking processes..."
+        ps aux | grep -E "order-engine|3001" | grep -v grep
+        echo "   Debug: Checking ports..."
+        lsof -i:3001 || netstat -an | grep 3001
+        exit 1
+    fi
+    echo -n "."
+    sleep 1
+done
 
 # Start Resolver
 echo ""
@@ -83,13 +101,18 @@ echo "$RESOLVER_PID" >> "$PID_FILE"
 echo "   Resolver PID: $RESOLVER_PID"
 
 # Wait and check if resolver started
-sleep 3
-if check_port 3002; then
-    echo "   ✅ Resolver started successfully"
-else
-    echo "   ❌ Resolver failed to start. Check resolver.log"
-    exit 1
-fi
+echo "   Waiting for Resolver to start..."
+for i in {1..20}; do
+    if check_port 3002; then
+        echo "   ✅ Resolver started successfully"
+        break
+    fi
+    if [ $i -eq 20 ]; then
+        echo "   ❌ Resolver failed to start. Check resolver.log"
+        exit 1
+    fi
+    sleep 1
+done
 
 # Start Frontend
 echo ""

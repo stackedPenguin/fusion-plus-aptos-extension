@@ -6,7 +6,6 @@ import { WETHService } from '../services/WETHService';
 import { AssetFlowLogger } from '../services/AssetFlowLogger';
 import { CONTRACTS } from '../config/contracts';
 import { Serializer } from '@aptos-labs/ts-sdk';
-import { SponsoredTransactionService } from '../utils/sponsoredTransaction';
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -406,64 +405,23 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 // Get the user's secret hash from stored data
                 const userSecretHash = (window as any).__fusionPlusSecret?.secretHash || data.secretHash;
                 
-                // NEW: Use sponsored transaction approach where user's APT is used
-                try {
-                  const sponsoredService = new SponsoredTransactionService();
-                  const escrowParams = {
-                    escrowId: signedIntent.orderMessage.escrow_id,
-                    beneficiary: CONTRACTS.RESOLVER.APTOS,
-                    amount: currentOrderData.fromAmount,
-                    hashlock: signedIntent.orderMessage.hashlock,
-                    timelock: signedIntent.orderMessage.timelock,
-                    safetyDeposit: '100000', // 0.001 APT
-                    resolverAddress: CONTRACTS.RESOLVER.APTOS
-                  };
-                  
-                  // Create the transaction for user to sign
-                  const userTransaction = await sponsoredService.createUserFundedEscrowTransaction(
-                    currentOrderData.maker,
-                    escrowParams
-                  );
-                  
-                  await logger.logSwapStep('💰 Creating escrow with YOUR APT', 'Resolver will pay gas fees only');
-                  
-                  // Have user sign the transaction (their APT will be used)
-                  const signedTransaction = await (window as any).aptos.signTransaction(userTransaction);
-                  
-                  // Send to resolver for sponsorship
-                  socket.emit('order:signed:sponsored', {
-                    orderId: data.orderId,
-                    orderMessage: signedIntent.orderMessage,
-                    signature: signedIntent.signature,
-                    publicKey: signedIntent.publicKey,
-                    fullMessage: signedIntent.fullMessage,
-                    fromChain: 'APTOS',
-                    toChain: 'ETHEREUM',
-                    fromAmount: currentOrderData.fromAmount,
-                    toAmount: currentOrderData.minToAmount,
-                    secretHash: userSecretHash,
-                    // New sponsored transaction data
-                    sponsoredTransaction: {
-                      rawTransaction: ethers.hexlify(signedTransaction.rawTransaction),
-                      userAuthenticator: ethers.hexlify(signedTransaction.authenticator.bcsToBytes())
-                    }
-                  });
-                } catch (sponsorError: any) {
-                  console.error('Failed to create sponsored transaction, falling back to old method:', sponsorError);
-                  // Fallback to old method
-                  socket.emit('order:signed', {
-                    orderId: data.orderId,
-                    orderMessage: signedIntent.orderMessage,
-                    signature: signedIntent.signature,
-                    publicKey: signedIntent.publicKey,
-                    fullMessage: signedIntent.fullMessage,
-                    fromChain: 'APTOS',
-                    toChain: 'ETHEREUM',
-                    fromAmount: currentOrderData.fromAmount,
-                    toAmount: currentOrderData.minToAmount,
-                    secretHash: userSecretHash // Send user's secret hash
-                  });
-                }
+                // For now, we'll use the standard flow where resolver fronts APT
+                // TODO: Implement proper sponsored transactions when Petra wallet supports them
+                socket.emit('order:signed', {
+                  orderId: data.orderId,
+                  orderMessage: signedIntent.orderMessage,
+                  signature: signedIntent.signature,
+                  publicKey: signedIntent.publicKey,
+                  fullMessage: signedIntent.fullMessage,
+                  fromChain: 'APTOS',
+                  toChain: 'ETHEREUM',
+                  fromAmount: currentOrderData.fromAmount,
+                  toAmount: currentOrderData.minToAmount,
+                  secretHash: userSecretHash // Send user's secret hash
+                });
+                
+                // Note for future: Sponsored transactions would allow user's APT to be used directly
+                // Currently falling back to resolver fronting APT due to wallet limitations
                 
                 await logger.logSwapStep('✅ Fusion+ order signed', 'Waiting for resolver to create escrows (gasless)');
                 
