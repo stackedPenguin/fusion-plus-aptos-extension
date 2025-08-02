@@ -230,15 +230,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         setSwapStatus({ stage: 'signing_intent', message: '✨ Signing gasless WETH transfer...' });
         await logger.logSwapStep('✨ True Gasless WETH Swap', 'You only sign, resolver pays gas');
         
-        // Check if gasless escrow is deployed (you'll need to add this config)
-        const gaslessEscrowAddress = CONTRACTS.ETHEREUM.GASLESS_ESCROW || '';
+        // Require gasless escrow for WETH -> APT swaps
+        const gaslessEscrowAddress = CONTRACTS.ETHEREUM.GASLESS_ESCROW;
         if (!gaslessEscrowAddress) {
-          // Fallback to regular flow
-          signature = await orderService.signOrder(orderData, ethSigner);
-          finalOrderData = { ...orderData, signature };
-        } else {
-          // Check if user has approved WETH to gasless escrow
-          const wethContract = new ethers.Contract(
+          throw new Error('Gasless escrow not configured. Please check system configuration.');
+        }
+        
+        // Check if user has approved WETH to gasless escrow
+        const wethContract = new ethers.Contract(
             CONTRACTS.ETHEREUM.WETH,
             [
               'function allowance(address owner, address spender) view returns (uint256)',
@@ -284,10 +283,7 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                 return;
               }
             } else {
-              alert('Gasless swaps require WETH approval. Using regular flow instead.');
-              // Fallback to regular flow
-              signature = await orderService.signOrder(orderData, ethSigner);
-              finalOrderData = { ...orderData, signature };
+              throw new Error('Gasless swaps require WETH approval. Please approve WETH to enable gasless swaps.');
             }
           }
           
@@ -334,10 +330,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               gasless: true,
               gaslessData: gaslessTx.prepareGaslessEscrowData(escrowParams, metaTxSig, deadline)
             };
-          } else if (!finalOrderData) {
-            // Fallback to regular order if gasless didn't work
-            signature = await orderService.signOrder(orderData, ethSigner);
-            finalOrderData = { ...orderData, signature };
+          } else {
+            throw new Error('Failed to create gasless order. WETH approval is required.');
           }
         }
         

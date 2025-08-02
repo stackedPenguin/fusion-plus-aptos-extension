@@ -1107,51 +1107,15 @@ export class ResolverServiceV2 {
           try {
             // Execute gasless escrow creation
             await this.executeGaslessWETHEscrow(order, fill);
-            return; // Gasless flow handles everything - IMPORTANT: Don't continue to regular flow
+            return; // Gasless flow handles everything
           } catch (error) {
             console.error(`   ❌ Failed to execute gasless WETH escrow:`, error);
-            console.log(`   ⏳ Falling back to regular WETH flow...`);
-            // Continue to regular flow below
+            throw new Error(`Gasless WETH escrow failed: ${error.message}`);
           }
         }
         
-        console.log(`   🎫 Checking WETH approval for automatic transfer...`);
-        
-        try {
-          const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
-          const wethService = new WETHService(this.ethereumProvider, WETH_ADDRESS);
-          
-          // Check if user has approved WETH for our escrow contract
-          const allowance = await wethService.getAllowance(
-            order.maker,
-            process.env.ETHEREUM_ESCROW_ADDRESS!
-          );
-          
-          if (allowance >= BigInt(order.fromAmount)) {
-            console.log(`   ✅ WETH allowance sufficient: ${allowance.toString()}`);
-            
-            // Also check WETH balance
-            const wethBalance = await wethService.getBalance(order.maker);
-            console.log(`   💰 User WETH balance: ${ethers.formatEther(wethBalance)} WETH`);
-            
-            if (BigInt(wethBalance) < BigInt(order.fromAmount)) {
-              console.log(`   ❌ Insufficient WETH balance: ${ethers.formatEther(wethBalance)} < ${ethers.formatEther(order.fromAmount)}`);
-              console.log(`   ⏳ User needs to wrap more ETH to WETH...`);
-              return;
-            }
-            
-            console.log(`   📝 Creating source escrow (WETH will be transferred automatically)...`);
-            // Continue to create source escrow - the escrow contract will handle the transfer
-          } else {
-            console.log(`   ❌ Insufficient WETH allowance: ${allowance.toString()} < ${order.fromAmount}`);
-            console.log(`   ⏳ Waiting for user to approve WETH and create source escrow manually...`);
-            return;
-          }
-        } catch (error) {
-          console.error(`   ❌ Failed to execute WETH transfer:`, error);
-          console.log(`   ⏳ Falling back to manual escrow creation...`);
-          return;
-        }
+        // For WETH, we require gasless flow
+        throw new Error('WETH swaps require gasless flow. Non-gasless WETH orders are not supported.');
       } else if (order.permit && order.permitSignature && order.fromChain === 'ETHEREUM') {
         // For other tokens with permits
         console.log(`   🎫 Executing automatic transfer with permit...`);
