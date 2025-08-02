@@ -9,6 +9,7 @@ import { Serializer } from '@aptos-labs/ts-sdk';
 import { SponsoredTransactionV2 } from '../utils/sponsoredTransactionV2';
 import { walletSupportsSponsoredTransactions, detectWalletType } from '../utils/walletDetection';
 import { PermitSigner, EscrowPermitParams } from '../utils/permitSigning';
+import { ApprovalBanner } from './ApprovalBanner';
 
 // Helper function to convert Uint8Array to hex string (browser-compatible)
 function toHex(uint8array: Uint8Array): string {
@@ -1178,6 +1179,19 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           )}
         </div>
       </div>
+      
+      {/* Show approval banner for WETH if needed */}
+      {fromChain === Chain.ETHEREUM && selectedToken === 'WETH' && ethAccount && ethSigner && (
+        <ApprovalBanner
+          ethAccount={ethAccount}
+          ethSigner={ethSigner}
+          wethAddress={CONTRACTS.WETH.ETHEREUM}
+          escrowAddress={CONTRACTS.ESCROW.ETHEREUM}
+          onApprovalComplete={() => {
+            console.log('✅ WETH approval complete!');
+          }}
+        />
+      )}
       
       <div className="swap-form">
         {/* From Token */}
