@@ -21,6 +21,7 @@ interface EscrowParams {
   hashlock: Uint8Array;
   timelock: number;
   safetyDeposit: string;
+  resolverAddress: string;
 }
 
 export class SponsoredTransactionV2 {
@@ -44,16 +45,17 @@ export class SponsoredTransactionV2 {
       sender: userAddress,
       withFeePayer: true, // Critical: Enable fee payer mode
       data: {
-        // Use the standard create_escrow function - user pays APT, resolver pays gas
-        function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow',
+        // Use create_escrow_user_funded - user pays APT, resolver pays gas
+        function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded',
         typeArguments: [],
         functionArguments: [
-          params.escrowId,
+          Array.from(params.escrowId),
           params.beneficiary,
           params.amount,
-          params.hashlock,
+          Array.from(params.hashlock),
           params.timelock.toString(),
-          params.safetyDeposit
+          params.safetyDeposit,
+          params.resolverAddress
         ]
       }
     });
