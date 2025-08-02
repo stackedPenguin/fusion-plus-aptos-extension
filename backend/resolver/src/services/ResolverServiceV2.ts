@@ -1975,7 +1975,7 @@ export class ResolverServiceV2 {
         console.log('   ⏱️ Transaction timed out, checking status...');
         try {
           // Try to get the transaction directly
-          const txStatus = await aptos.getTransactionByHash({ 
+          const txStatus = await this.chainService.aptosChainService.aptos.getTransactionByHash({ 
             transactionHash: error.lastSubmittedTransaction?.hash 
           });
           console.log('   📊 Transaction status:', txStatus);
