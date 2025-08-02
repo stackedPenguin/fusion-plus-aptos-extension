@@ -926,9 +926,21 @@ export class ResolverServiceV2 {
       if (order.fromChain === 'APTOS') {
         // For APT source, withdraw from Aptos escrow
         console.log('   🪙 Withdrawing from Aptos source escrow...');
-        // sourceEscrowId is already a hex string, convert to bytes
-        const escrowIdBytes = ethers.getBytes(sourceEscrowId);
-        console.log('   📝 Escrow ID (hex):', sourceEscrowId);
+        
+        // Convert sourceEscrowId to proper format
+        let escrowIdBytes: Uint8Array;
+        if (Array.isArray(sourceEscrowId)) {
+          // If it's an array, convert directly to Uint8Array
+          escrowIdBytes = new Uint8Array(sourceEscrowId);
+          console.log('   📝 Escrow ID (array):', sourceEscrowId);
+        } else if (typeof sourceEscrowId === 'string') {
+          // If it's a hex string, convert to bytes
+          escrowIdBytes = ethers.getBytes(sourceEscrowId);
+          console.log('   📝 Escrow ID (hex):', sourceEscrowId);
+        } else {
+          throw new Error(`Invalid escrow ID format: ${typeof sourceEscrowId}`);
+        }
+        
         console.log('   📝 Escrow ID (bytes):', Array.from(escrowIdBytes));
         withdrawTx = await this.chainService.withdrawAptosEscrow(
           escrowIdBytes,
@@ -1748,6 +1760,11 @@ export class ResolverServiceV2 {
     try {
       const { orderId, escrowId, secretHash } = data;
       
+      // Convert escrowId array to hex string for consistent storage
+      const escrowIdHex = Array.isArray(escrowId) 
+        ? '0x' + escrowId.map((b: number) => b.toString(16).padStart(2, '0')).join('')
+        : escrowId;
+      
       // Find the matching fill
       let matchingFill: Fill | undefined;
       let matchingOrder: Order | undefined;
@@ -1773,7 +1790,7 @@ export class ResolverServiceV2 {
       }
       
       console.log('\n💰 APT source escrow created on Aptos, both escrows now exist');
-      console.log('   📝 Storing source escrow ID:', escrowId);
+      console.log('   📝 Storing source escrow ID:', escrowIdHex);
       console.log('   📝 Destination escrow ID:', matchingFill.destinationEscrowId);
       
       // Request secret from user now that both escrows exist
@@ -1787,7 +1804,7 @@ export class ResolverServiceV2 {
       this.pendingSecretReveals.set(matchingOrder.id, {
         order: matchingOrder,
         fill: matchingFill,
-        sourceEscrowId: escrowId,
+        sourceEscrowId: escrowIdHex,
         destinationEscrowId: matchingFill.destinationEscrowId!
       });
       
