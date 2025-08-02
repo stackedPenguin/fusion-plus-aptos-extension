@@ -506,13 +506,41 @@ export class ResolverServiceV2 {
       await this.createPartialAptosEscrow(order, partialEscrowId, partialToAmount);
     }
     
+    // Track the partial fill
+    const fill = {
+      id: partialEscrowId,
+      orderId: order.id,
+      resolver: this.ethereumAddress,
+      amount: partialToAmount,
+      fillPercentage,
+      cumulativePercentage: await this.getCurrentFillPercentage(order.id) + fillPercentage,
+      secretHash: order.secretHash!,
+      secretIndex,
+      status: 'PENDING' as const,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    // Store fill information
+    this.monitoringFills.set(partialEscrowId, fill);
+    
     // Emit partial fill event
+    console.log(`   📢 Emitting partial:fill:created event for order ${order.id}`);
     this.socket.emit('partial:fill:created', {
       orderId: order.id,
       fillPercentage,
       secretIndex,
       partialEscrowId,
       resolver: this.ethereumAddress
+    });
+    
+    // For Fusion+ flow, we need to wait for the source escrow from user
+    // But let's update the order status
+    this.socket.emit('order:update', {
+      orderId: order.id,
+      status: 'PARTIALLY_FILLED',
+      filledPercentage: fill.cumulativePercentage,
+      message: `🧩 ${fill.cumulativePercentage}% filled by partial fill`
     });
   }
 

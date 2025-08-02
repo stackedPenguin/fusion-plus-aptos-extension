@@ -453,8 +453,9 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         (window as any).__fusionPlusSecret.orderId = orderId;
       }
 
-      // Store order data
+      // Store order data and set current order for partial fill tracking
       const currentOrderData = orderData;
+      setCurrentOrder({ ...orderData, id: orderId });
       
       // Subscribe to order updates
       orderService.subscribeToOrderUpdates(orderId, async (update: any) => {
@@ -870,22 +871,6 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
     <div className="swap-interface">
       <h2>True Gasless Swap (Fusion+ V2)</h2>
       
-      {/* Gasless explanation banner */}
-      <div style={{
-        background: 'rgba(29, 200, 114, 0.1)',
-        border: '1px solid rgba(29, 200, 114, 0.2)',
-        color: 'rgba(29, 200, 114, 0.9)',
-        padding: '12px 16px',
-        borderRadius: '8px',
-        marginBottom: '16px',
-        fontSize: '14px',
-        textAlign: 'center'
-      }}>
-        <strong>🚀 100% Gasless</strong> - You pay NO gas fees! The resolver pays all transaction costs.
-        <br />
-        <small style={{ opacity: 0.8, color: 'rgba(255, 255, 255, 0.6)' }}>Note: Wallets may display gas fees, but you won't be charged.</small>
-      </div>
-      
       {/* Show approval banner for WETH */}
       {fromChain === Chain.ETHEREUM && ethAccount && ethSigner && (
         <ApprovalBanner
@@ -946,10 +931,15 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
               onChange={(e) => setPartialFillAllowed(e.target.checked)}
             />
             <span className="toggle-text">
-              🧩 Allow Partial Fills
-              <small style={{ display: 'block', fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
-                Enables multiple resolvers to fill portions of your order for better rates
-              </small>
+              <div className="toggle-text-main">
+                🧩 Allow Partial Fills
+                <div className="info-button">
+                  i
+                  <div className="info-tooltip">
+                    Enables multiple resolvers to fill portions of your order for better rates and faster execution. Your order can be split into up to 4 parts (25% each).
+                  </div>
+                </div>
+              </div>
             </span>
           </label>
         </div>
@@ -990,13 +980,23 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           </div>
         )}
 
-        <button
-          onClick={handleSwap}
-          disabled={isLoading || !fromAmount || !estimatedOutput}
-          className={`swap-button ${isLoading ? 'loading' : ''}`}
-        >
-          {isLoading ? 'Processing...' : '🚀 Swap (TRUE Gasless - Resolver Pays)'}
-        </button>
+        <div className="swap-button-container">
+          <button
+            onClick={handleSwap}
+            disabled={isLoading || !fromAmount || !estimatedOutput}
+            className={`swap-button ${isLoading ? 'loading' : ''}`}
+          >
+            {isLoading ? 'Processing...' : '🚀 Swap Now'}
+          </button>
+          <div className="info-button" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }}>
+            i
+            <div className="info-tooltip" style={{ right: '0', left: 'auto', transform: 'none' }}>
+              <strong>100% Gasless</strong> - You pay NO gas fees! The resolver pays all transaction costs.
+              <br />
+              <small style={{ opacity: 0.8 }}>Note: Wallets may display gas fees, but you won't be charged.</small>
+            </div>
+          </div>
+        </div>
 
         {swapStatus.stage !== 'idle' && (
           <div className={`swap-status ${swapStatus.stage}`}>
