@@ -942,6 +942,10 @@ export class ResolverServiceV2 {
         }
         
         console.log('   📝 Escrow ID (bytes):', Array.from(escrowIdBytes));
+        console.log('   📝 Full pending reveal data:', this.pendingSecretReveals.get(order.id));
+        console.log('   📝 Order ID:', order.id);
+        console.log('   📝 Secret (hex):', ethers.hexlify(secret));
+        
         withdrawTx = await this.chainService.withdrawAptosEscrow(
           escrowIdBytes,
           secret
@@ -1790,8 +1794,10 @@ export class ResolverServiceV2 {
       }
       
       console.log('\n💰 APT source escrow created on Aptos, both escrows now exist');
-      console.log('   📝 Storing source escrow ID:', escrowIdHex);
+      console.log('   📝 Storing source escrow ID (hex):', escrowIdHex);
+      console.log('   📝 Storing source escrow ID (array):', escrowId);
       console.log('   📝 Destination escrow ID:', matchingFill.destinationEscrowId);
+      console.log('   📝 Transaction hash:', data.transactionHash);
       
       // Request secret from user now that both escrows exist
       console.log('   🔐 Both escrows created, requesting secret from user...');
