@@ -45,6 +45,21 @@ interface Order {
   // Permit for automatic transfers
   permit?: Permit;
   permitSignature?: string;
+  // Gasless transaction data
+  gasless?: boolean;
+  gaslessData?: {
+    escrowId: string;
+    depositor: string;
+    beneficiary: string;
+    token: string;
+    amount: string;
+    hashlock: string;
+    timelock: string;
+    deadline: string;
+    metaTxV: number;
+    metaTxR: string;
+    metaTxS: string;
+  };
 }
 
 interface Fill {
@@ -368,6 +383,12 @@ export class ResolverServiceV2 {
                      order.toToken === '0x1::aptos_coin::AptosCoin' ? 'APT' : 
                      order.toToken;
       
+      // Debug token mapping
+      console.log(`   🔍 Order fromToken: ${order.fromToken}`);
+      console.log(`   🔍 WETH_ADDRESS: ${WETH_ADDRESS}`);
+      console.log(`   🔍 Comparison: ${order.fromToken.toLowerCase()} === ${WETH_ADDRESS.toLowerCase()} ? ${order.fromToken.toLowerCase() === WETH_ADDRESS.toLowerCase()}`);
+      console.log(`   🔍 Mapped fromToken: ${fromToken}`);
+      console.log(`   🔍 Mapped toToken: ${toToken}`);
       console.log(`   🔍 Getting exchange rate for ${fromToken} -> ${toToken}`);
       const exchangeRate = await this.priceService.getExchangeRate(fromToken, toToken);
       console.log(`   📈 Raw exchange rate: ${exchangeRate}`);
@@ -378,7 +399,7 @@ export class ResolverServiceV2 {
         ? ethers.formatEther(order.fromAmount)  // 18 decimals for ETH/WETH
         : (parseInt(order.fromAmount) / 100000000).toString(); // 8 decimals for APT
       
-      console.log(`   📏 From amount formatted: ${fromAmountFormatted} ${fromToken}`);
+      console.log(`   📏 From amount formatted: ${fromAmountFormatted} ${fromToken === 'ETH' ? 'WETH' : fromToken} (mapped to ${fromToken})`);
       
       const expectedOutput = this.priceService.calculateOutputAmount(
         fromAmountFormatted, 
@@ -695,6 +716,26 @@ export class ResolverServiceV2 {
           console.log(`   ⏳ Waiting for user to create source escrow manually...`);
         }
       } else if (isWETHOrder) {
+        console.log(`   🔍 WETH order detected. Checking for gasless...`);
+        console.log(`   📊 Order gasless flag:`, order.gasless);
+        console.log(`   📊 Order has gaslessData:`, !!order.gaslessData);
+        
+        // Check if this is a gasless WETH order
+        if (order.gasless && order.gaslessData) {
+          console.log(`   ✨ Gasless WETH order detected!`);
+          console.log(`   🎫 Processing meta-transaction for WETH escrow...`);
+          
+          try {
+            // Execute gasless escrow creation
+            await this.executeGaslessWETHEscrow(order, fill);
+            return; // Gasless flow handles everything - IMPORTANT: Don't continue to regular flow
+          } catch (error) {
+            console.error(`   ❌ Failed to execute gasless WETH escrow:`, error);
+            console.log(`   ⏳ Falling back to regular WETH flow...`);
+            // Continue to regular flow below
+          }
+        }
+        
         console.log(`   🎫 Checking WETH approval for automatic transfer...`);
         
         try {
@@ -969,8 +1010,14 @@ export class ResolverServiceV2 {
           secret
         );
       } else {
-        // For ETH/WETH source, withdraw from Ethereum escrow
-        withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+        // For ETH/WETH source, check if it's a gasless order
+        if (order.gasless && order.gaslessData) {
+          console.log('   ✨ Gasless order detected - using gasless escrow contract');
+          withdrawTx = await this.chainService.withdrawGaslessEscrow(sourceEscrowId, ethers.hexlify(secret));
+        } else {
+          console.log('   🏦 Regular order - using standard escrow contract');
+          withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+        }
       }
       
       console.log('   ✅ Successfully withdrew from source escrow!');
@@ -992,6 +1039,7 @@ export class ResolverServiceV2 {
       // Now withdraw from destination escrow to transfer funds to user
       if (order.toChain === 'APTOS') {
         console.log('   🔓 Withdrawing from Aptos escrow to transfer funds to user...');
+        console.log('   📝 Destination escrow ID to withdraw from:', destEscrowId);
         
         try {
           // Convert escrow ID to bytes
@@ -1128,7 +1176,16 @@ export class ResolverServiceV2 {
       }
       
       // Withdraw from source escrow (we are the beneficiary)
-      const withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      const fillOrder = this.activeOrders.get(fill.orderId);
+      let withdrawTx: string;
+      
+      if (fillOrder && fillOrder.gasless && fillOrder.gaslessData) {
+        console.log('   ✨ Gasless order detected - using gasless escrow contract');
+        withdrawTx = await this.chainService.withdrawGaslessEscrow(sourceEscrowId, ethers.hexlify(secret));
+      } else {
+        console.log('   🏦 Regular order - using standard escrow contract');
+        withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
+      }
       
       console.log('   ✅ Successfully withdrew from source escrow!');
       
@@ -1147,8 +1204,8 @@ export class ResolverServiceV2 {
       });
       
       // Now withdraw from destination escrow to transfer funds to user
-      const order = this.activeOrders.get(fill.orderId);
-      if (order && order.toChain === 'APTOS' && fill.destinationEscrowId) {
+      const orderData = this.activeOrders.get(fill.orderId);
+      if (orderData && orderData.toChain === 'APTOS' && fill.destinationEscrowId) {
         console.log('   🔓 Withdrawing from Aptos escrow to transfer funds to user...');
         
         try {
@@ -1199,10 +1256,10 @@ export class ResolverServiceV2 {
       this.socket.emit('swap:completed', {
         orderId: fill.orderId,
         fillId: fill.id,
-        sourceChain: order?.fromChain || 'ETHEREUM',
-        destinationChain: order?.toChain || 'APTOS',
-        fromAmount: order?.fromAmount || fill.amount,
-        toAmount: order?.toChain === 'APTOS' ? order?.minToAmount : fill.amount,
+        sourceChain: orderData?.fromChain || 'ETHEREUM',
+        destinationChain: orderData?.toChain || 'APTOS',
+        fromAmount: orderData?.fromAmount || fill.amount,
+        toAmount: orderData?.toChain === 'APTOS' ? orderData?.minToAmount : fill.amount,
         txHash: withdrawTx
       });
       
@@ -1781,6 +1838,116 @@ export class ResolverServiceV2 {
         error: 'Failed to create multi-agent APT escrow',
         details: error instanceof Error ? error.message : 'Unknown error'
       });
+    }
+  }
+
+  private async executeGaslessWETHEscrow(order: Order, fill: Fill): Promise<void> {
+    console.log(`   ✨ Executing gasless WETH escrow creation...`);
+    
+    if (!order.gaslessData) {
+      throw new Error('No gasless data provided');
+    }
+    
+    const wallet = new ethers.Wallet(process.env.ETHEREUM_PRIVATE_KEY!, this.ethereumProvider);
+    const gaslessEscrowAddress = process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS;
+    
+    if (!gaslessEscrowAddress) {
+      throw new Error('Gasless escrow contract not configured');
+    }
+    
+    // ABI for the gasless escrow contract with struct parameter
+    const gaslessEscrowAbi = [
+      'function createEscrowWithMetaTx(tuple(bytes32 escrowId, address depositor, address beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock, uint256 deadline) params, uint8 v, bytes32 r, bytes32 s) external payable'
+    ];
+    
+    const gaslessEscrow = new ethers.Contract(
+      gaslessEscrowAddress,
+      gaslessEscrowAbi,
+      wallet
+    );
+    
+    const { gaslessData } = order;
+    
+    console.log(`   📝 Creating escrow with meta-tx signature...`);
+    console.log(`   👤 Depositor: ${gaslessData.depositor}`);
+    console.log(`   💰 Amount: ${ethers.formatEther(gaslessData.amount)} WETH`);
+    
+    // Calculate safety deposit (0.001 ETH)
+    const safetyDeposit = ethers.parseEther('0.001');
+    
+    try {
+      // Prepare params struct
+      const metaTxParams = {
+        escrowId: gaslessData.escrowId,
+        depositor: gaslessData.depositor,
+        beneficiary: gaslessData.beneficiary,
+        token: gaslessData.token,
+        amount: gaslessData.amount,
+        hashlock: gaslessData.hashlock,
+        timelock: gaslessData.timelock,
+        deadline: gaslessData.deadline
+      };
+      
+      // Execute the gasless escrow creation
+      const tx = await gaslessEscrow.createEscrowWithMetaTx(
+        metaTxParams,
+        gaslessData.metaTxV,
+        gaslessData.metaTxR,
+        gaslessData.metaTxS,
+        { value: safetyDeposit } // Resolver pays safety deposit
+      );
+      
+      console.log(`   📤 Gasless escrow transaction sent: ${tx.hash}`);
+      console.log(`   ⏳ Waiting for confirmation...`);
+      
+      const receipt = await tx.wait();
+      console.log(`   ✅ Gasless escrow created! Gas used: ${receipt.gasUsed.toString()}`);
+      console.log(`   💸 Resolver paid all gas fees!`);
+      
+      // Emit source escrow created event
+      this.socket.emit('escrow:source:created', {
+        orderId: order.id,
+        escrowId: gaslessData.escrowId,
+        chain: 'ETHEREUM',
+        amount: gaslessData.amount,
+        txHash: receipt.hash,
+        gasless: true
+      });
+      
+      // Mark that we've processed this automatically
+      this.processedEvents.add(`auto-${gaslessData.escrowId}`);
+      
+      // Request secret from user now that both escrows exist
+      console.log('   🔐 Both escrows created, requesting secret from user...');
+      this.socket.emit('secret:request', {
+        orderId: order.id,
+        message: 'Both escrows confirmed on-chain. Please reveal your secret to complete the swap.'
+      });
+      
+      // Get the updated fill object with destination escrow ID
+      // The destination escrow was created earlier and the fill was updated
+      const destEscrowId = ethers.id(order.id + '-dest-' + order.secretHash);
+      const updatedFill = this.monitoringFills.get(destEscrowId);
+      
+      if (!updatedFill || !updatedFill.destinationEscrowId) {
+        throw new Error('Updated fill with destination escrow ID not found');
+      }
+      
+      console.log(`   📝 Using destination escrow ID: ${updatedFill.destinationEscrowId}`);
+      
+      // Store pending swap info for when secret is revealed
+      this.pendingSecretReveals.set(order.id, {
+        order,
+        fill: updatedFill,
+        sourceEscrowId: gaslessData.escrowId,
+        destinationEscrowId: updatedFill.destinationEscrowId
+      });
+      
+      console.log(`   🎉 Gasless WETH escrow flow completed successfully!`);
+      
+    } catch (error: any) {
+      console.error(`   ❌ Gasless escrow transaction failed:`, error);
+      throw error;
     }
   }
 

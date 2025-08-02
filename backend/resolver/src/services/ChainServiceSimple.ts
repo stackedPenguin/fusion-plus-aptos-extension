@@ -261,6 +261,30 @@ export class ChainServiceSimple {
     return receipt.hash;
   }
 
+  async withdrawGaslessEscrow(escrowId: string, secret: string): Promise<string> {
+    const gaslessEscrowAddress = process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS;
+    if (!gaslessEscrowAddress) {
+      throw new Error('Gasless escrow contract address not configured');
+    }
+
+    const gaslessEscrowAbi = [
+      'function withdraw(bytes32 _escrowId, bytes32 _secret)'
+    ];
+    
+    const gaslessEscrowContract = new ethers.Contract(
+      gaslessEscrowAddress,
+      gaslessEscrowAbi, 
+      this.ethereum.signer
+    );
+
+    console.log(`   🏦 Withdrawing from gasless escrow contract: ${gaslessEscrowAddress}`);
+    console.log(`   🆔 Escrow ID: ${escrowId}`);
+    
+    const tx = await gaslessEscrowContract.withdraw(escrowId, secret);
+    const receipt = await tx.wait();
+    return receipt.hash;
+  }
+
   async createEthereumEscrowFor(
     escrowId: string,
     depositor: string,
