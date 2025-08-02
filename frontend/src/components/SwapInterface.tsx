@@ -812,16 +812,29 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       });
 
       // Handle partial fill events
-      socket.on('partial:fill:created', (data: any) => {
+      const handlePartialFillCreated = (data: any) => {
         if (data.orderId === orderId) {
           console.log('🧩 Partial fill created:', data);
-          setPartialFills(prev => [...prev, {
-            resolver: data.resolver,
-            fillPercentage: data.fillPercentage,
-            secretIndex: data.secretIndex,
-            status: 'PENDING',
-            timestamp: Date.now()
-          }]);
+          setPartialFills(prev => {
+            // Check if we already have this fill to avoid duplicates
+            const exists = prev.some(fill => 
+              fill.secretIndex === data.secretIndex && 
+              fill.resolver === data.resolver
+            );
+            
+            if (exists) {
+              console.log('   ⚠️ Duplicate partial fill event ignored');
+              return prev;
+            }
+            
+            return [...prev, {
+              resolver: data.resolver,
+              fillPercentage: data.fillPercentage,
+              secretIndex: data.secretIndex,
+              status: 'PENDING',
+              timestamp: Date.now()
+            }];
+          });
           
           setSwapStatus({
             stage: 'processing',
@@ -829,7 +842,9 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             orderId
           });
         }
-      });
+      };
+      
+      socket.on('partial:fill:created', handlePartialFillCreated);
 
       socket.on('partial:fill:completed', (data: any) => {
         if (data.orderId === orderId) {

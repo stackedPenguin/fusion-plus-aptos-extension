@@ -436,6 +436,18 @@ export class ResolverServiceV2 {
       // Create partial escrows with the appropriate secret
       await this.createPartialEscrows(order, fillPercentage, secretIndex, partialFromAmount, partialToAmount);
       
+      // Simulate waiting for more resolvers by checking again after a delay
+      if (newCumulativePercentage < 100) {
+        console.log(`   ⏳ Order ${newCumulativePercentage}% filled, waiting for more resolvers...`);
+        
+        // In a real system, different resolvers would pick up the remaining portions
+        // For demo, we'll simulate by processing again after a delay
+        setTimeout(() => {
+          console.log(`   🔄 Checking if we can fill more of order ${order.id}`);
+          this.handlePartialFillOrder(order);
+        }, 5000); // Wait 5 seconds before trying to fill more
+      }
+      
     } catch (error: any) {
       console.error(`   ❌ Error handling partial fill:`, error.message);
       throw error;
@@ -443,27 +455,36 @@ export class ResolverServiceV2 {
   }
 
   private async calculateOptimalFillPercentage(order: Order): Promise<number> {
-    // Simple strategy: Try to fill as much as we can afford
-    // In production, this would use more sophisticated logic
+    // Demo strategy: Always fill only 25% to demonstrate partial fills
+    // This allows multiple resolvers (or same resolver multiple times) to fill portions
     
     try {
       // Check our balance on destination chain
       const balance = await this.getDestinationBalance(order);
       const requiredAmount = BigInt(order.minToAmount);
       
-      if (balance < requiredAmount) {
-        // Calculate what percentage we can afford
-        const affordablePercentage = Number((balance * 100n) / requiredAmount);
-        
-        // Round down to nearest 25% increment for simplicity
-        const fillPercentage = Math.floor(affordablePercentage / 25) * 25;
-        
-        console.log(`   💡 Can only afford ${affordablePercentage.toFixed(1)}%, rounding to ${fillPercentage}%`);
-        return Math.max(0, fillPercentage);
+      // For demo purposes, let's always fill 25% if we can afford it
+      const quarterAmount = requiredAmount / 4n;
+      
+      if (balance < quarterAmount) {
+        console.log(`   ❌ Cannot afford even 25% of the order`);
+        return 0;
       }
       
-      // If we can afford the full amount, fill 100%
-      return 100;
+      // Get current fill status
+      const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
+      console.log(`   📊 Order currently ${currentFillPercentage}% filled`);
+      
+      // If order is already 75% or more filled, fill the remaining amount
+      if (currentFillPercentage >= 75) {
+        const remaining = 100 - currentFillPercentage;
+        console.log(`   💡 Filling remaining ${remaining}% to complete order`);
+        return remaining;
+      }
+      
+      // Otherwise, fill 25%
+      console.log(`   💡 Filling 25% portion (demo mode)`);
+      return 25;
       
     } catch (error) {
       console.error(`   ❌ Error calculating fill percentage:`, error);
