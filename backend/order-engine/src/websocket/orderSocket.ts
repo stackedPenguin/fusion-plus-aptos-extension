@@ -162,28 +162,33 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
     });
     
     // Relay partial fill events
-    socket.on('partial:fill:created', (data: any) => {
+    socket.on('partial:fill:created', async (data: any) => {
       console.log('Relaying partial:fill:created event:', data);
-      io.emit('partial:fill:created', data);
-      if (data.orderId) {
-        io.to(`order:${data.orderId}`).emit('partial:fill:created', data);
+      
+      // Update order filled percentage when partial fill is created
+      if (data.orderId && data.cumulativePercentage !== undefined) {
+        try {
+          await orderService.updateOrderFilledPercentage(data.orderId, data.cumulativePercentage);
+          console.log(`Updated order ${data.orderId} to ${data.cumulativePercentage}% filled`);
+        } catch (error) {
+          console.error('Failed to update order filled percentage:', error);
+        }
       }
+      
+      // Only emit to all clients, not to specific room to avoid duplicates
+      io.emit('partial:fill:created', data);
     });
     
     socket.on('partial:fill:completed', (data: any) => {
       console.log('Relaying partial:fill:completed event:', data);
+      // Only emit to all clients, not to specific room to avoid duplicates
       io.emit('partial:fill:completed', data);
-      if (data.orderId) {
-        io.to(`order:${data.orderId}`).emit('partial:fill:completed', data);
-      }
     });
     
     socket.on('order:update', (data: any) => {
       console.log('Relaying order:update event:', data);
+      // Only emit to all clients, not to specific room to avoid duplicates
       io.emit('order:update', data);
-      if (data.orderId) {
-        io.to(`order:${data.orderId}`).emit('order:update', data);
-      }
     });
 
     // Handle new order submissions

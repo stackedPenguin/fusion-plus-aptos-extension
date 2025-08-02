@@ -88,6 +88,10 @@ export class OrderService extends EventEmitter {
     }, '0');
     order.filledAmount = totalFilled;
 
+    // Calculate and update filled percentage
+    const filledPercentage = Number((BigInt(totalFilled) * BigInt(100)) / BigInt(order.fromAmount));
+    order.filledPercentage = filledPercentage;
+
     // Update order status
     if (totalFilled === order.fromAmount) {
       order.status = OrderStatus.FILLED;
@@ -149,6 +153,26 @@ export class OrderService extends EventEmitter {
     order.updatedAt = new Date();
 
     this.emit('orderCancelled', order);
+  }
+
+  // Update order filled percentage (for partial fills)
+  async updateOrderFilledPercentage(orderId: string, percentage: number): Promise<void> {
+    const order = this.orders.get(orderId);
+    if (!order) {
+      throw new Error('Order not found');
+    }
+
+    order.filledPercentage = percentage;
+    order.updatedAt = new Date();
+
+    // Update status based on percentage
+    if (percentage >= 100) {
+      order.status = OrderStatus.FILLED;
+    } else if (percentage > 0) {
+      order.status = OrderStatus.PARTIALLY_FILLED;
+    }
+
+    this.emit('orderUpdate', order);
   }
 
   // Cleanup expired orders

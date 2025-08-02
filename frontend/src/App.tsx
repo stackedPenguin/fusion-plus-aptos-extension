@@ -4,7 +4,6 @@ import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import Web3Modal from 'web3modal';
 import './App.css';
 import SwapInterface from './components/SwapInterface';
-import TransactionPanel from './components/TransactionPanel';
 import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
 import { WalletTester } from './components/WalletTester';
@@ -243,33 +242,17 @@ function App() {
 
       <div className="app-layout">
         <div className="main-content">
-          <div className="logo-section">
-            <h1>Fusion+ Aptos Extension</h1>
-            <span className="beta-badge">BETA</span>
-          </div>
-          
-          <div className="swap-container">
-            <SwapInterface
-              ethAccount={ethAccount}
-              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
-              ethSigner={ethSigner}
-              orderService={orderService}
-              ethBalance={ethBalance}
-              aptosBalance={aptosBalance}
-            />
-          </div>
-        </div>
-        
-        <div className="sidebar">
-          <div className="sidebar-section wallet-section">
-            <h3 className="sidebar-section-title">Wallets</h3>
+          <div className="top-header">
+            <div className="logo-section">
+              <h1>Fusion+ Aptos Extension</h1>
+              <span className="beta-badge">BETA</span>
+            </div>
             
-            <div className={`wallet-card ${ethAccount ? 'connected' : ''}`}>
-              <div className="wallet-icon">
-                <img src="/metamask-icon.png" alt="MetaMask" />
-              </div>
-              <div className="wallet-content">
-                <h3>Ethereum</h3>
+            <div className="wallet-connectors">
+              <div className={`wallet-connector ${ethAccount ? 'connected' : ''}`}>
+                <div className="wallet-icon">
+                  <img src="/metamask-icon.png" alt="MetaMask" />
+                </div>
                 {ethAccount ? (
                   <>
                     <div className="wallet-info">
@@ -278,20 +261,17 @@ function App() {
                       </div>
                       <div className="balance-info">{parseFloat(ethBalance).toFixed(4)} ETH</div>
                     </div>
-                    <button className="disconnect-btn" onClick={disconnectEthereum}>Disconnect</button>
+                    <button className="disconnect-btn" onClick={disconnectEthereum}>×</button>
                   </>
                 ) : (
-                  <button onClick={connectEthereum}>Connect</button>
+                  <button className="connect-btn" onClick={connectEthereum}>Connect Ethereum</button>
                 )}
               </div>
-            </div>
 
-            <div className={`wallet-card ${aptosAccount || martianConnected ? 'connected' : ''}`}>
-              <div className="wallet-icon">
-                <img src="/petra.png" alt="Aptos" />
-              </div>
-              <div className="wallet-content">
-                <h3>Aptos</h3>
+              <div className={`wallet-connector ${aptosAccount || martianConnected ? 'connected' : ''}`}>
+                <div className="wallet-icon">
+                  <img src="/petra.png" alt="Aptos" />
+                </div>
                 {aptosAccount || martianConnected ? (
                   <>
                     <div className="wallet-info">
@@ -302,9 +282,6 @@ function App() {
                         })()}
                       </div>
                       <div className="balance-info">{aptosBalance} APT</div>
-                      {martianConnected && !aptosAccount && (
-                        <div style={{ fontSize: '12px', color: '#4CAF50' }}>✓ Martian Connected</div>
-                      )}
                     </div>
                     <button className="disconnect-btn" onClick={() => {
                       if (martianConnected && !aptosAccount) {
@@ -316,10 +293,11 @@ function App() {
                       } else {
                         disconnectAptos();
                       }
-                    }}>Disconnect</button>
+                    }}>×</button>
                   </>
                 ) : (
                   <button 
+                    className="connect-btn"
                     onClick={() => {
                       // Connect to Petra wallet
                       const wallet = wallets?.find(w => w.name === 'Petra');
@@ -349,21 +327,23 @@ function App() {
                       }
                     }}
                   >
-                    Connect
+                    Connect Aptos
                   </button>
                 )}
               </div>
             </div>
           </div>
           
-          <div className="sidebar-section transaction-section">
-            <TransactionPanel
+          <div className="swap-container">
+            <SwapInterface
               ethAccount={ethAccount}
-              aptosAccount={aptosAccount?.address || null}
+              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
+              ethSigner={ethSigner}
               orderService={orderService}
+              ethBalance={ethBalance}
+              aptosBalance={aptosBalance}
             />
           </div>
-          
         </div>
       </div>
     </div>

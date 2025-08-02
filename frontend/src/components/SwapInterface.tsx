@@ -454,8 +454,8 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       }
 
       // Store order data and set current order for partial fill tracking
-      const currentOrderData = orderData;
-      setCurrentOrder({ ...orderData, id: orderId });
+      const currentOrderData = finalOrderData || orderData;
+      setCurrentOrder({ ...currentOrderData, id: orderId });
       setPartialFills([]); // Clear any previous partial fills
       
       // Subscribe to order updates
@@ -486,8 +486,9 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             secretHash: data.secretHash
           });
           
-          // For APT -> WETH swaps, automatically sign APT escrow transaction
+          // Handle source escrow creation based on swap direction
           if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
+            // For APT -> WETH swaps, automatically sign APT escrow transaction
             console.log('🔄 Triggering gasless APT escrow creation...');
             
             const signedIntent = (window as any).__fusionPlusIntent;
@@ -694,6 +695,52 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 });
               }
             }, 1000);
+          } else if (fromChain === Chain.ETHEREUM && data.chain === 'APTOS') {
+            // For ETH -> APT swaps, create WETH source escrow
+            console.log('🔄 Creating WETH source escrow...');
+            
+            // Calculate the amount based on partial fill if applicable
+            let escrowAmount = currentOrderData.fromAmount;
+            if (data.isPartialFill && data.fillPercentage) {
+              // For partial fills, only escrow the percentage being filled
+              const fillPercentage = data.fillPercentage;
+              escrowAmount = (BigInt(currentOrderData.fromAmount) * BigInt(fillPercentage) / BigInt(100)).toString();
+              console.log(`🧩 Partial fill: Creating escrow for ${fillPercentage}% = ${ethers.formatEther(escrowAmount)} WETH`);
+            }
+            
+            setTimeout(async () => {
+              try {
+                setSwapStatus({ stage: 'signing_tx', message: '✨ Creating gasless WETH escrow...' });
+                await logger.logSwapStep('🔒 Creating WETH Escrow', `Locking ${ethers.formatEther(escrowAmount)} WETH`);
+                
+                // For gasless WETH escrow, resolver will handle it
+                socket.emit('order:signed', {
+                  orderId: data.orderId,
+                  fromChain: 'ETHEREUM',
+                  toChain: 'APTOS',
+                  signature: (currentOrderData as any).signature || '0x00',
+                  signedOrder: currentOrderData,
+                  gaslessData: (currentOrderData as any).gaslessData,
+                  secretHash: currentOrderData.secretHash,
+                  isPartialFill: data.isPartialFill,
+                  fillPercentage: data.fillPercentage,
+                  escrowAmount: escrowAmount
+                });
+                
+                setSwapStatus({
+                  stage: 'processing',
+                  message: 'Creating WETH escrow...',
+                  orderId: data.orderId
+                });
+              } catch (error: any) {
+                console.error('Failed to create WETH escrow:', error);
+                setSwapStatus({
+                  stage: 'error',
+                  message: `❌ ${error.message}`,
+                  orderId: data.orderId
+                });
+              }
+            }, 1000);
           }
         }
       });
@@ -713,11 +760,31 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             
             setTimeout(() => {
               console.log('🔓 Revealing secret to resolver...');
-              socket.emit('secret:reveal', {
-                orderId,
-                secret: (window as any).__fusionPlusSecret.secret,
-                secretHash: (window as any).__fusionPlusSecret.secretHash
-              });
+              
+              // For partial fills, reveal the appropriate secret based on the fill
+              if (currentOrderData?.partialFillAllowed && currentOrderData?.partialFillSecrets && partialFills.length > 0) {
+                // Find the latest partial fill
+                const latestFill = partialFills[partialFills.length - 1];
+                const secretIndex = latestFill.secretIndex || 0;
+                const secret = currentOrderData.partialFillSecrets.secrets[secretIndex];
+                console.log(`🧩 Revealing partial fill secret index ${secretIndex} for ${latestFill.cumulativePercentage}% fill`);
+                
+                socket.emit('secret:reveal', {
+                  orderId,
+                  secret,
+                  secretHash: currentOrderData.secretHash,
+                  secretIndex,
+                  isPartialFill: true,
+                  fillPercentage: latestFill.cumulativePercentage
+                });
+              } else {
+                // Regular full fill
+                socket.emit('secret:reveal', {
+                  orderId,
+                  secret: (window as any).__fusionPlusSecret.secret,
+                  secretHash: (window as any).__fusionPlusSecret.secretHash
+                });
+              }
               
               setSwapStatus({
                 stage: 'claiming',
@@ -830,6 +897,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             return [...prev, {
               resolver: data.resolver,
               fillPercentage: data.fillPercentage,
+              cumulativePercentage: data.cumulativePercentage || data.fillPercentage,
               secretIndex: data.secretIndex,
               status: 'PENDING',
               timestamp: Date.now()
@@ -1002,7 +1070,10 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             disabled={isLoading || !fromAmount || !estimatedOutput}
             className={`swap-button ${isLoading ? 'loading' : ''}`}
           >
-            {isLoading ? 'Processing...' : '🚀 Swap Now'}
+            {isLoading ? 'Processing...' : 
+             currentOrder && partialFills.length > 0 && partialFills[partialFills.length - 1]?.cumulativePercentage < 100 ? 
+             `🎯 Complete Swap (${partialFills[partialFills.length - 1]?.cumulativePercentage || 0}% filled)` : 
+             '🚀 Swap Now'}
           </button>
           <div className="info-button" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }}>
             i

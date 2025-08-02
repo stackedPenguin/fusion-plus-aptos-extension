@@ -63,6 +63,12 @@ interface Order {
   secretHash?: string; // User-generated secret hash for Fusion+ protocol
   secretHashes?: string[];
   partialFillAllowed?: boolean;
+  partialFillSecrets?: {
+    merkleRoot: string;
+    secrets: string[];
+    merkleProofs: string[][];
+    fillThresholds: number[];
+  };
   // Permit for automatic transfers
   permit?: Permit;
   permitSignature?: string;
@@ -91,8 +97,12 @@ interface Fill {
   secretHash: string;
   secretIndex: number;
   status: string;
+  fillPercentage?: number;
+  cumulativePercentage?: number;
   destinationEscrowId?: string;
   sourceEscrowId?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export class ResolverServiceV2 {
@@ -113,6 +123,8 @@ export class ResolverServiceV2 {
   private monitoringFills: Map<string, Fill> = new Map();
   // Track secrets for fills
   private fillSecrets: Map<string, Uint8Array> = new Map();
+  // Track fill attempts to prevent duplicates
+  private fillAttempts: Map<string, boolean> = new Map();
   // Track processed events to avoid duplicates
   private processedEvents: Set<string> = new Set();
   // Track pending swaps waiting for secret reveal
@@ -177,8 +189,17 @@ export class ResolverServiceV2 {
       console.log('\n📝 Received order:signed event');
       console.log('   From chain:', data.fromChain);
       console.log('   Order ID:', data.orderId);
+      console.log('   Is partial fill:', data.isPartialFill || false);
+      
       if (data.fromChain === 'APTOS') {
         await this.handleSignedAptosOrder(data);
+      } else if (data.fromChain === 'ETHEREUM') {
+        // Handle ETHEREUM source orders (including partial fills)
+        if (data.isPartialFill && data.fillPercentage) {
+          console.log(`   🧩 Partial fill: ${data.fillPercentage}%`);
+          console.log(`   💰 Escrow amount: ${data.escrowAmount}`);
+        }
+        await this.handleSignedEthereumOrder(data);
       }
     });
 
@@ -250,29 +271,88 @@ export class ResolverServiceV2 {
       console.log('\n🔓 Received secret:reveal event');
       console.log('   Order ID:', data.orderId);
       console.log('   Secret hash:', data.secretHash);
+      console.log('   Is partial fill:', data.isPartialFill || false);
       
-      const pendingSwap = this.pendingSecretReveals.get(data.orderId);
-      if (pendingSwap) {
-        const secret = ethers.getBytes(data.secret);
+      if (data.isPartialFill && data.secretIndex !== undefined) {
+        console.log('   Secret index:', data.secretIndex);
+        console.log('   Fill percentage:', data.fillPercentage);
         
-        // Verify secret hash matches
-        const computedHash = ethers.keccak256(secret);
-        if (computedHash !== data.secretHash) {
-          console.error('   ❌ Secret hash mismatch!');
+        // Handle partial fill secret reveal
+        const order = this.activeOrders.get(data.orderId);
+        if (!order || !order.partialFillSecrets) {
+          console.error('   ❌ Order not found or not a partial fill order');
           return;
         }
         
-        console.log('   ✅ Secret verified, completing swap...');
-        await this.completeSwap(
-          pendingSwap.order,
-          pendingSwap.fill,
-          secret,
-          pendingSwap.sourceEscrowId,
-          pendingSwap.destinationEscrowId
-        );
+        // Verify this is the correct secret for this index
+        const expectedSecret = order.partialFillSecrets.secrets[data.secretIndex];
+        if (data.secret !== expectedSecret) {
+          console.error('   ❌ Secret mismatch for index', data.secretIndex);
+          return;
+        }
         
-        // Clean up
-        this.pendingSecretReveals.delete(data.orderId);
+        console.log('   ✅ Partial fill secret verified!');
+        
+        // Find the partial fill escrow that needs this secret
+        for (const [escrowId, fill] of this.monitoringFills.entries()) {
+          if (fill.orderId === data.orderId && fill.secretIndex === data.secretIndex) {
+            console.log(`   🎯 Found matching partial fill escrow: ${escrowId}`);
+            console.log(`   💰 This will complete ${fill.fillPercentage}% of the order`);
+            
+            // Get the pending swap info for this order
+            const pendingSwap = this.pendingSecretReveals.get(data.orderId);
+            if (pendingSwap) {
+              console.log(`   🔄 Completing partial fill swap...`);
+              const secret = ethers.getBytes(data.secret);
+              
+              // Complete the swap for this partial fill
+              await this.completeSwap(
+                pendingSwap.order,
+                fill,
+                secret,
+                pendingSwap.sourceEscrowId,
+                escrowId // Use the partial escrow ID as destination
+              );
+              
+              // Clean up only after successful completion
+              this.pendingSecretReveals.delete(data.orderId);
+            } else {
+              // Just emit completion for demo if no pending swap
+              this.socket.emit('swap:completed', {
+                orderId: data.orderId,
+                fillPercentage: data.fillPercentage,
+                isPartialFill: true,
+                message: `Partial swap completed: ${data.fillPercentage}% of order filled`
+              });
+            }
+            break;
+          }
+        }
+      } else {
+        // Handle regular full fill
+        const pendingSwap = this.pendingSecretReveals.get(data.orderId);
+        if (pendingSwap) {
+          const secret = ethers.getBytes(data.secret);
+          
+          // Verify secret hash matches
+          const computedHash = ethers.keccak256(secret);
+          if (computedHash !== data.secretHash) {
+            console.error('   ❌ Secret hash mismatch!');
+            return;
+          }
+          
+          console.log('   ✅ Secret verified, completing swap...');
+          await this.completeSwap(
+            pendingSwap.order,
+            pendingSwap.fill,
+            secret,
+            pendingSwap.sourceEscrowId,
+            pendingSwap.destinationEscrowId
+          );
+          
+          // Clean up
+          this.pendingSecretReveals.delete(data.orderId);
+        }
       }
     });
 
@@ -475,15 +555,16 @@ export class ResolverServiceV2 {
       const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
       console.log(`   📊 Order currently ${currentFillPercentage}% filled`);
       
-      // If order is already 75% or more filled, fill the remaining amount
-      if (currentFillPercentage >= 75) {
-        const remaining = 100 - currentFillPercentage;
-        console.log(`   💡 Filling remaining ${remaining}% to complete order`);
-        return remaining;
+      // Demo: Only fill once (25%) to demonstrate partial fills
+      if (currentFillPercentage > 0) {
+        console.log(`   ✅ Demo complete: Order has ${currentFillPercentage}% filled`);
+        console.log(`   📝 User can now complete the swap with this partial fill`);
+        console.log(`   💡 In production, other resolvers would compete to fill the remaining ${100 - currentFillPercentage}%`);
+        return 0; // Don't fill anymore for demo
       }
       
-      // Otherwise, fill 25%
-      console.log(`   💡 Filling 25% portion (demo mode)`);
+      // Demo: Fill exactly 25% once
+      console.log(`   🎯 Demo: Filling 25% portion (one-time demonstration)`);
       return 25;
       
     } catch (error) {
@@ -496,7 +577,10 @@ export class ResolverServiceV2 {
     try {
       // Query the order engine for current fill status
       const response = await axios.get(`${process.env.ORDER_ENGINE_URL}/api/orders/${orderId}`);
-      return response.data.filledPercentage || 0;
+      if (response.data.success && response.data.data) {
+        return response.data.data.filledPercentage || 0;
+      }
+      return 0;
     } catch (error) {
       console.log(`   ⚠️ Could not get current fill percentage, assuming 0%`);
       return 0;
@@ -528,19 +612,55 @@ export class ResolverServiceV2 {
     }
     
     // Track the partial fill
+    const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
+    const cumulativePercentage = currentFillPercentage + fillPercentage;
+    console.log(`   📊 Current fill: ${currentFillPercentage}%, Adding: ${fillPercentage}%, Total will be: ${cumulativePercentage}%`);
+    
     const fill = {
       id: partialEscrowId,
       orderId: order.id,
       resolver: this.ethereumAddress,
       amount: partialToAmount,
       fillPercentage,
-      cumulativePercentage: await this.getCurrentFillPercentage(order.id) + fillPercentage,
+      cumulativePercentage,
       secretHash: order.secretHash!,
       secretIndex,
       status: 'PENDING' as const,
       createdAt: new Date(),
       updatedAt: new Date()
     };
+    
+    // Create fill in order engine first
+    try {
+      const fillData = {
+        resolver: this.ethereumAddress,
+        amount: partialToAmount,
+        secretHash: order.secretHash!,
+        secretIndex,
+        status: 'PENDING',
+        fillPercentage,
+        cumulativePercentage,
+        destinationEscrowId: partialEscrowId
+      };
+      
+      console.log(`   📤 Creating fill record in order engine...`);
+      const response = await axios.post(
+        `${process.env.ORDER_ENGINE_URL}/api/orders/${order.id}/fills`,
+        fillData
+      );
+      
+      if (response.data.success && response.data.data) {
+        const createdFill = response.data.data;
+        console.log(`   ✅ Fill created with ID: ${createdFill.id}`);
+        
+        // Update fill with the ID from order engine
+        fill.id = createdFill.id;
+        fill.orderId = createdFill.orderId;
+      }
+    } catch (error) {
+      console.error(`   ❌ Failed to create fill in order engine:`, error);
+      // Continue anyway for demo
+    }
     
     // Store fill information
     this.monitoringFills.set(partialEscrowId, fill);
@@ -550,9 +670,24 @@ export class ResolverServiceV2 {
     this.socket.emit('partial:fill:created', {
       orderId: order.id,
       fillPercentage,
+      cumulativePercentage: fill.cumulativePercentage,
       secretIndex,
       partialEscrowId,
       resolver: this.ethereumAddress
+    });
+    
+    // Also emit destination escrow created event for compatibility
+    console.log(`   📢 Emitting escrow:destination:created for partial fill`);
+    this.socket.emit('escrow:destination:created', {
+      orderId: order.id,
+      chain: order.toChain,
+      escrowId: partialEscrowId,
+      amount: partialToAmount,
+      secretHash: order.secretHash,
+      timelock: Math.floor(Date.now() / 1000) + 3600, // 1 hour timelock
+      isPartialFill: true,
+      fillPercentage,
+      secretIndex
     });
     
     // For Fusion+ flow, we need to wait for the source escrow from user
@@ -2085,6 +2220,67 @@ export class ResolverServiceV2 {
     }
   }
 
+  private async handleSignedEthereumOrder(data: any): Promise<void> {
+    console.log('\n💵 Processing signed Ethereum order...');
+    console.log('   Is partial fill:', data.isPartialFill || false);
+    
+    const order = this.activeOrders.get(data.orderId);
+    if (!order) {
+      console.error('   ❌ Order not found');
+      return;
+    }
+    
+    // For partial fills, we need to find the corresponding partial fill
+    let fill: Fill;
+    let escrowAmount = order.fromAmount;
+    
+    if (data.isPartialFill && data.fillPercentage) {
+      console.log(`   🧩 Creating WETH escrow for ${data.fillPercentage}% partial fill`);
+      
+      // Find the partial fill that matches this percentage
+      for (const [escrowId, partialFill] of this.monitoringFills.entries()) {
+        if (partialFill.orderId === data.orderId && partialFill.fillPercentage === data.fillPercentage) {
+          fill = partialFill;
+          escrowAmount = data.escrowAmount || partialFill.amount;
+          console.log(`   🎯 Found matching partial fill: ${escrowId}`);
+          console.log(`   💰 Escrow amount: ${ethers.formatEther(escrowAmount)} WETH`);
+          break;
+        }
+      }
+      
+      if (!fill!) {
+        console.error('   ❌ No matching partial fill found');
+        return;
+      }
+    } else {
+      // Regular full fill
+      fill = {
+        id: `${order.id}-resolver`,
+        orderId: order.id,
+        resolver: this.ethereumAddress,
+        amount: order.fromAmount,
+        secretHash: order.secretHash || '',
+        secretIndex: 0,
+        status: 'PENDING'
+      };
+    }
+    
+    // Create a modified order with the partial amount for gasless escrow
+    const modifiedOrder = { ...order, fromAmount: escrowAmount };
+    
+    // Execute the gasless WETH escrow
+    try {
+      await this.executeGaslessWETHEscrow(modifiedOrder, fill);
+    } catch (error) {
+      console.error('Failed to create WETH escrow:', error);
+      this.socket.emit('order:failed', {
+        orderId: order.id,
+        error: 'Failed to create WETH escrow',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
   private async executeGaslessWETHEscrow(order: Order, fill: Fill): Promise<void> {
     console.log(`   ✨ Executing gasless WETH escrow creation...`);
     
@@ -2114,7 +2310,7 @@ export class ResolverServiceV2 {
     
     console.log(`   📝 Creating escrow with meta-tx signature...`);
     console.log(`   👤 Depositor: ${gaslessData.depositor}`);
-    console.log(`   💰 Amount: ${ethers.formatEther(gaslessData.amount)} WETH`);
+    console.log(`   💰 Amount: ${ethers.formatEther(fill.amount)} WETH`);
     
     // Calculate safety deposit (0.001 ETH)
     const safetyDeposit = ethers.parseEther('0.001');
@@ -2153,7 +2349,7 @@ export class ResolverServiceV2 {
         orderId: order.id,
         escrowId: gaslessData.escrowId,
         chain: 'ETHEREUM',
-        amount: gaslessData.amount,
+        amount: fill.amount, // Use the actual fill amount for partial fills
         txHash: receipt.hash,
         gasless: true
       });
@@ -2168,23 +2364,41 @@ export class ResolverServiceV2 {
         message: 'Both escrows confirmed on-chain. Please reveal your secret to complete the swap.'
       });
       
-      // Get the updated fill object with destination escrow ID
-      // The destination escrow was created earlier and the fill was updated
-      const destEscrowId = ethers.id(order.id + '-dest-' + order.secretHash);
-      const updatedFill = this.monitoringFills.get(destEscrowId);
+      // For partial fills, find the fill by orderId and secretIndex
+      let updatedFill = fill;
+      let destEscrowId: string | undefined;
       
-      if (!updatedFill || !updatedFill.destinationEscrowId) {
-        throw new Error('Updated fill with destination escrow ID not found');
+      // If this is a partial fill, find the destination escrow from monitoring fills
+      if (fill.fillPercentage !== undefined) {
+        for (const [escrowId, monitoredFill] of this.monitoringFills.entries()) {
+          if (monitoredFill.orderId === order.id && monitoredFill.secretIndex === fill.secretIndex) {
+            updatedFill = monitoredFill;
+            destEscrowId = escrowId;
+            break;
+          }
+        }
+      } else {
+        // For regular fills, use the standard approach
+        destEscrowId = ethers.id(order.id + '-dest-' + order.secretHash);
+        const monitoredFill = this.monitoringFills.get(destEscrowId);
+        if (monitoredFill) {
+          updatedFill = monitoredFill;
+        }
       }
       
-      console.log(`   📝 Using destination escrow ID: ${updatedFill.destinationEscrowId}`);
+      if (!destEscrowId) {
+        console.log('   ⚠️ No destination escrow found, using order ID for tracking');
+        destEscrowId = order.id;
+      }
+      
+      console.log(`   📝 Using destination escrow ID: ${destEscrowId}`);
       
       // Store pending swap info for when secret is revealed
       this.pendingSecretReveals.set(order.id, {
         order,
         fill: updatedFill,
         sourceEscrowId: gaslessData.escrowId,
-        destinationEscrowId: updatedFill.destinationEscrowId
+        destinationEscrowId: destEscrowId
       });
       
       console.log(`   🎉 Gasless WETH escrow flow completed successfully!`);
