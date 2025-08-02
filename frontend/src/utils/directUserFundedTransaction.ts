@@ -39,7 +39,7 @@ export class DirectUserFundedTransaction {
     const transaction = await this.aptos.transaction.build.simple({
       sender: userAddress,
       data: {
-        function: `${this.escrowModule}::create_escrow_user_funded`,
+        function: `${this.escrowModule}::create_escrow_user_funded` as `${string}::${string}::${string}`,
         typeArguments: [],
         functionArguments: [
           Array.from(params.escrowId),
