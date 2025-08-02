@@ -69,6 +69,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [ethPrice, setEthPrice] = useState<number>(0);
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
+  const [partialFillAllowed, setPartialFillAllowed] = useState<boolean>(false);
+  const [currentOrder, setCurrentOrder] = useState<any>(null);
+  const [partialFills, setPartialFills] = useState<any[]>([]);
 
   // Get current balances
   const currentBalances = {
@@ -184,6 +187,14 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         revealed: false
       };
       
+      // Generate partial fill secrets if enabled
+      let partialFillSecrets = null;
+      if (partialFillAllowed) {
+        // Import the secrets manager (you'll need to add this import at the top)
+        const { PartialFillSecretsManager } = await import('../utils/partialFillSecrets');
+        partialFillSecrets = PartialFillSecretsManager.generateSecrets(4); // 4 parts = 25% each
+      }
+
       // Build order data
       const orderData = {
         fromChain,
@@ -202,8 +213,13 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
         nonce: Date.now().toString(),
-        partialFillAllowed: false,
-        secretHash
+        partialFillAllowed,
+        secretHash,
+        // Add partial fill data if enabled
+        ...(partialFillAllowed && partialFillSecrets && {
+          partialFillSecrets,
+          maxParts: 4
+        })
       };
 
       let finalOrderData: any;
@@ -793,6 +809,53 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         }
       });
 
+      // Handle partial fill events
+      socket.on('partial:fill:created', (data: any) => {
+        if (data.orderId === orderId) {
+          console.log('🧩 Partial fill created:', data);
+          setPartialFills(prev => [...prev, {
+            resolver: data.resolver,
+            fillPercentage: data.fillPercentage,
+            secretIndex: data.secretIndex,
+            status: 'PENDING',
+            timestamp: Date.now()
+          }]);
+          
+          setSwapStatus({
+            stage: 'processing',
+            message: `🧩 Partial fill: ${data.fillPercentage}% by resolver ${data.resolver.slice(0, 6)}...`,
+            orderId
+          });
+        }
+      });
+
+      socket.on('partial:fill:completed', (data: any) => {
+        if (data.orderId === orderId) {
+          console.log('✅ Partial fill completed:', data);
+          setPartialFills(prev => prev.map(fill => 
+            fill.secretIndex === data.secretIndex 
+              ? { ...fill, status: 'COMPLETED' }
+              : fill
+          ));
+          
+          const totalFilled = partialFills.reduce((sum, fill) => sum + fill.fillPercentage, 0) + data.fillPercentage;
+          if (totalFilled >= 100) {
+            setSwapStatus({
+              stage: 'completed',
+              message: '🎉 Swap completed via partial fills!',
+              orderId
+            });
+            setIsLoading(false);
+          } else {
+            setSwapStatus({
+              stage: 'processing',
+              message: `🧩 ${totalFilled.toFixed(1)}% filled, waiting for more resolvers...`,
+              orderId
+            });
+          }
+        }
+      });
+
     } catch (error: any) {
       console.error('Swap failed:', error);
       setSwapStatus({
@@ -871,6 +934,59 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         {exchangeRate && (
           <div className="exchange-rate">
             1 {fromChain === Chain.ETHEREUM ? 'WETH' : 'APT'} = {exchangeRate.toFixed(4)} {toChain === Chain.ETHEREUM ? 'WETH' : 'APT'}
+          </div>
+        )}
+
+        {/* Partial Fill Toggle */}
+        <div className="partial-fill-section">
+          <label className="partial-fill-toggle">
+            <input
+              type="checkbox"
+              checked={partialFillAllowed}
+              onChange={(e) => setPartialFillAllowed(e.target.checked)}
+            />
+            <span className="toggle-text">
+              🧩 Allow Partial Fills
+              <small style={{ display: 'block', fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
+                Enables multiple resolvers to fill portions of your order for better rates
+              </small>
+            </span>
+          </label>
+        </div>
+
+        {/* Partial Fill Progress */}
+        {currentOrder && partialFills.length > 0 && (
+          <div className="partial-fill-progress">
+            <div className="progress-header">
+              <h4>Fill Progress</h4>
+              <span className="fill-percentage">
+                {partialFills.reduce((sum, fill) => sum + fill.fillPercentage, 0).toFixed(1)}% Complete
+              </span>
+            </div>
+            <div className="progress-bar-container">
+              <div 
+                className="progress-bar-fill" 
+                style={{ 
+                  width: `${partialFills.reduce((sum, fill) => sum + fill.fillPercentage, 0)}%`,
+                  background: 'linear-gradient(90deg, #1dc872, #4ade80)'
+                }}
+              />
+            </div>
+            <div className="fills-list">
+              {partialFills.map((fill, i) => (
+                <div key={i} className="fill-item">
+                  <div className="fill-info">
+                    <span className="resolver">Resolver {fill.resolver.slice(0, 6)}...</span>
+                    <span className="fill-amount">{fill.fillPercentage}%</span>
+                  </div>
+                  <div className="fill-status">
+                    {fill.status === 'COMPLETED' ? '✅ Complete' : 
+                     fill.status === 'PENDING' ? '⏳ Processing' : 
+                     '🔄 Active'}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

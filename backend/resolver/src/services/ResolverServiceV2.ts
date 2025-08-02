@@ -8,6 +8,7 @@ import { WETHService } from './WETHService';
 import { BalanceTracker } from './BalanceTracker';
 import dotenv from 'dotenv';
 import { createHash, randomBytes } from 'crypto';
+import { PartialFillSecretsManager } from '../../order-engine/src/utils/partialFillSecrets';
 // CORRECTED: Import FeePayerRawTransaction instead of FeePayerTransaction
 import { 
   Deserializer, 
@@ -282,6 +283,12 @@ export class ResolverServiceV2 {
       console.log(`   Amount: ${order.fromAmount} → ${order.minToAmount}`);
       console.log(`   Order fields:`, Object.keys(order));
       console.log(`   Order secretHash:`, order.secretHash);
+      console.log(`   Partial fill allowed:`, order.partialFillAllowed);
+      
+      // Handle partial fills differently
+      if (order.partialFillAllowed) {
+        return this.handlePartialFillOrder(order);
+      }
       
       // Check if order is profitable
       const isProfitable = await this.checkProfitability(order);
@@ -367,6 +374,174 @@ export class ResolverServiceV2 {
     } finally {
       this.isProcessing.delete(order.id);
     }
+  }
+
+  private async handlePartialFillOrder(order: Order) {
+    console.log(`\n🧩 Handling partial fill order ${order.id}`);
+    
+    try {
+      // Determine how much of this order we can/want to fill
+      const fillPercentage = await this.calculateOptimalFillPercentage(order);
+      
+      if (fillPercentage === 0) {
+        console.log(`   ❌ Cannot fill any portion of this order`);
+        return;
+      }
+      
+      console.log(`   📊 Planning to fill ${fillPercentage}% of order`);
+      
+      // Calculate partial amounts
+      const partialFromAmount = PartialFillSecretsManager.calculatePartialAmount(
+        order.fromAmount, 
+        fillPercentage
+      );
+      const partialToAmount = PartialFillSecretsManager.calculatePartialAmount(
+        order.minToAmount, 
+        fillPercentage
+      );
+      
+      console.log(`   💰 Partial amounts: ${ethers.formatEther(partialFromAmount)} → ${ethers.formatEther(partialToAmount)}`);
+      
+      // Get current fill status from order engine
+      const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
+      const newCumulativePercentage = currentFillPercentage + fillPercentage;
+      
+      // Determine which secret to request based on cumulative fill
+      const maxParts = (order as any).maxParts || 4;
+      const fillThresholds = Array.from({length: maxParts}, (_, i) => ((i + 1) * 100) / maxParts);
+      const secretIndex = PartialFillSecretsManager.getSecretIndex(newCumulativePercentage, fillThresholds);
+      
+      console.log(`   🔑 Need secret index ${secretIndex} for ${newCumulativePercentage}% cumulative fill`);
+      
+      // Create partial escrows with the appropriate secret
+      await this.createPartialEscrows(order, fillPercentage, secretIndex, partialFromAmount, partialToAmount);
+      
+    } catch (error: any) {
+      console.error(`   ❌ Error handling partial fill:`, error.message);
+      throw error;
+    }
+  }
+
+  private async calculateOptimalFillPercentage(order: Order): Promise<number> {
+    // Simple strategy: Try to fill as much as we can afford
+    // In production, this would use more sophisticated logic
+    
+    try {
+      // Check our balance on destination chain
+      const balance = await this.getDestinationBalance(order);
+      const requiredAmount = BigInt(order.minToAmount);
+      
+      if (balance < requiredAmount) {
+        // Calculate what percentage we can afford
+        const affordablePercentage = Number((balance * 100n) / requiredAmount);
+        
+        // Round down to nearest 25% increment for simplicity
+        const fillPercentage = Math.floor(affordablePercentage / 25) * 25;
+        
+        console.log(`   💡 Can only afford ${affordablePercentage.toFixed(1)}%, rounding to ${fillPercentage}%`);
+        return Math.max(0, fillPercentage);
+      }
+      
+      // If we can afford the full amount, fill 100%
+      return 100;
+      
+    } catch (error) {
+      console.error(`   ❌ Error calculating fill percentage:`, error);
+      return 0;
+    }
+  }
+
+  private async getCurrentFillPercentage(orderId: string): Promise<number> {
+    try {
+      // Query the order engine for current fill status
+      const response = await axios.get(`${process.env.ORDER_ENGINE_URL}/api/orders/${orderId}`);
+      return response.data.filledPercentage || 0;
+    } catch (error) {
+      console.log(`   ⚠️ Could not get current fill percentage, assuming 0%`);
+      return 0;
+    }
+  }
+
+  private async createPartialEscrows(
+    order: Order, 
+    fillPercentage: number, 
+    secretIndex: number,
+    partialFromAmount: string,
+    partialToAmount: string
+  ) {
+    console.log(`\n🔧 Creating partial escrows for ${fillPercentage}% fill`);
+    
+    // Generate unique escrow IDs for this partial fill
+    const fillIndex = Date.now(); // Simple fill index
+    const partialEscrowId = PartialFillSecretsManager.generatePartialEscrowId(order.id, fillIndex);
+    
+    console.log(`   🆔 Partial escrow ID: ${partialEscrowId}`);
+    
+    // Create destination escrow with partial amount
+    if (order.toChain === 'ETHEREUM') {
+      // Create Ethereum escrow for partial amount
+      await this.createPartialEthereumEscrow(order, partialEscrowId, partialToAmount);
+    } else if (order.toChain === 'APTOS') {
+      // Create Aptos escrow for partial amount  
+      await this.createPartialAptosEscrow(order, partialEscrowId, partialToAmount);
+    }
+    
+    // Emit partial fill event
+    this.socket.emit('partial:fill:created', {
+      orderId: order.id,
+      fillPercentage,
+      secretIndex,
+      partialEscrowId,
+      resolver: this.ethereumAddress
+    });
+  }
+
+  private async createPartialEthereumEscrow(order: Order, escrowId: string, amount: string) {
+    console.log(`   🏦 Creating partial Ethereum escrow`);
+    
+    // Use existing Ethereum escrow creation logic but with partial amounts
+    const hashlock = ethers.getBytes(order.secretHash!);
+    const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+    const safetyDeposit = ethers.parseEther('0.001');
+    
+    await this.chainService.createEthereumEscrow(
+      escrowId,
+      order.receiver,
+      order.toToken,
+      amount,
+      order.secretHash!,
+      timelock,
+      safetyDeposit.toString()
+    );
+  }
+
+  private async createPartialAptosEscrow(order: Order, escrowId: string, amount: string) {
+    console.log(`   🏦 Creating partial Aptos escrow`);
+    
+    // Use existing Aptos escrow creation logic but with partial amounts
+    const escrowIdBytes = ethers.getBytes(escrowId);
+    const hashlock = ethers.getBytes(order.secretHash!);
+    const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+    const safetyDeposit = (BigInt(amount) * 1n) / 1000n; // 0.1% safety deposit
+    
+    await this.chainService.createAptosEscrow(
+      escrowIdBytes,
+      order.receiver,
+      amount,
+      hashlock,
+      timelock,
+      safetyDeposit.toString()
+    );
+  }
+
+  private async getDestinationBalance(order: Order): Promise<bigint> {
+    if (order.toChain === 'ETHEREUM') {
+      return await this.chainService.getEthereumBalance(this.ethereumAddress, order.toToken);
+    } else if (order.toChain === 'APTOS') {
+      const balance = await this.chainService.getAptosBalance(this.aptosAddress);
+      return BigInt(balance);
+    }
+    return 0n;
   }
 
   private async checkProfitability(order: Order): Promise<boolean> {
