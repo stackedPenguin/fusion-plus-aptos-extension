@@ -9,6 +9,9 @@ import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
 import { WalletTester } from './components/WalletTester';
 import { MartianWalletConnection } from './utils/martianWalletConnection';
+import SponsoredTxTest from './components/SponsoredTxTest';
+import SponsoredTxTestSDK from './components/SponsoredTxTestSDK';
+import SponsoredTxTestMock from './components/SponsoredTxTestMock';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -26,6 +29,7 @@ function App() {
   const [showWalletTester, setShowWalletTester] = useState(false);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [martianConnected, setMartianConnected] = useState(false);
+  const [showSponsoredTxTest, setShowSponsoredTxTest] = useState(false);
 
   // Listen for Martian connection events
   useEffect(() => {
@@ -205,17 +209,36 @@ function App() {
           <div className="logo-section">
             <h1>Fusion+ Aptos Extension</h1>
             <span className="beta-badge">BETA</span>
+            <button 
+              onClick={() => setShowSponsoredTxTest(!showSponsoredTxTest)}
+              style={{
+                marginLeft: '20px',
+                padding: '5px 10px',
+                fontSize: '12px',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              {showSponsoredTxTest ? 'Back to Swap' : 'Test Sponsored Tx'}
+            </button>
           </div>
           
           <div className="swap-container">
-            <SwapInterface
-              ethAccount={ethAccount}
-              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
-              ethSigner={ethSigner}
-              orderService={orderService}
-              ethBalance={ethBalance}
-              aptosBalance={aptosBalance}
-            />
+            {showSponsoredTxTest ? (
+              <SponsoredTxTestMock />
+            ) : (
+              <SwapInterface
+                ethAccount={ethAccount}
+                aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
+                ethSigner={ethSigner}
+                orderService={orderService}
+                ethBalance={ethBalance}
+                aptosBalance={aptosBalance}
+              />
+            )}
           </div>
         </div>
         
@@ -283,106 +306,31 @@ function App() {
                       <>
                         <button 
                           onClick={() => {
-                            // Always use Petra wallet
-                            const selectedWallet = 'Petra';
-                            setSelectedWallet(selectedWallet);
-                            
-                            console.log(`[Wallet Connection] Connecting to Petra wallet`);
-                            console.log(`[Wallet Connection] Available wallets:`, wallets.map(w => ({ 
-                              name: w.name, 
-                              readyState: (w as any).readyState,
-                              installed: !!(window as any)[w.name.toLowerCase()]
-                            })));
-                            
+                            // Connect to Petra wallet
                             const wallet = wallets.find(w => w.name === 'Petra');
-                              if (!wallet) {
-                                console.error(`[Wallet Connection] Wallet ${selectedWallet} not found in wallets array`);
-                                alert(`Wallet ${selectedWallet} not found`);
-                                return;
-                              }
+                            if (!wallet) {
+                              console.error('[Wallet Connection] Petra wallet not found');
+                              alert('Petra wallet not found');
+                              return;
+                            }
+                            
+                            console.log('[Wallet Connection] Connecting to Petra wallet');
+                            setSelectedWallet('Petra');
+                            
+                            try {
+                              connectAptos(wallet.name);
+                              console.log('[Wallet Connection] Successfully initiated Petra connection');
+                            } catch (error: any) {
+                              console.error('[Wallet Connection] Connection failed:', error);
                               
-                              console.log(`[Wallet Connection] Found wallet:`, {
-                                name: wallet.name,
-                                readyState: (wallet as any).readyState,
-                                url: (wallet as any).url
-                              });
-                              
-                              // Check if wallet is installed
-                              const isInstalled = (window as any)[selectedWallet.toLowerCase()] || 
-                                                 (window as any).aptos?.name === selectedWallet ||
-                                                 (window as any).martian;
-                              
-                              console.log(`[Wallet Connection] Wallet installed check:`, {
-                                windowObject: !!(window as any)[selectedWallet.toLowerCase()],
-                                aptosName: (window as any).aptos?.name,
-                                hasMartian: !!(window as any).martian,
-                                isInstalled
-                              });
-                              
-                              if (!isInstalled && selectedWallet === 'Martian') {
-                                alert('Martian wallet extension not detected. Please install it from Chrome Web Store.');
-                                window.open('https://chrome.google.com/webstore/detail/martian-aptos-wallet/efbglgofoippbgcjepnhiblaibcnclgk', '_blank');
-                                return;
-                              }
-                              
-                              console.log(`[Wallet Connection] Calling connection method...`);
-                              
-                              // Special handling for Martian wallet
-                              if (selectedWallet === 'Martian' && (window as any).martian) {
-                                console.log('[Wallet Connection] Using direct Martian connection method');
-                                
-                                MartianWalletConnection.connect()
-                                  .then(async (account) => {
-                                    console.log('[Wallet Connection] Martian connected:', account);
-                                    
-                                    // Set a flag to indicate Martian is connected
-                                    (window as any).__martianConnected = true;
-                                    (window as any).__martianAccount = account;
-                                    
-                                    // Force update the UI by dispatching a custom event
-                                    window.dispatchEvent(new CustomEvent('martian:connected', { detail: account }));
-                                    
-                                    // Skip wallet adapter sync for Martian - we don't need it
-                                    console.log('[Wallet Connection] Martian connected successfully - skipping wallet adapter sync');
-                                    
-                                    // Force a small delay to ensure UI updates
-                                    setTimeout(() => {
-                                      console.log('[Wallet Connection] Martian wallet ready for use');
-                                    }, 100);
-                                  })
-                                  .catch((error) => {
-                                    console.error('[Wallet Connection] Martian direct connection failed:', error);
-                                    alert(error.message);
-                                  });
+                              let errorMessage = 'Failed to connect Petra wallet: ';
+                              if (error.message?.includes('not installed')) {
+                                errorMessage += 'Please install the Petra wallet extension';
                               } else {
-                                // Use standard wallet adapter for other wallets
-                                try {
-                                  connectAptos(wallet.name);
-                                  console.log(`[Wallet Connection] Successfully connected to ${selectedWallet}`);
-                                } catch (error: any) {
-                                  console.error(`[Wallet Connection] Connection failed:`, {
-                                    wallet: selectedWallet,
-                                    error,
-                                    errorMessage: error?.message,
-                                    errorCode: error?.code,
-                                    errorStack: error?.stack
-                                  });
-                                  
-                                  // Provide specific error messages
-                                  let errorMessage = `Failed to connect ${selectedWallet}: `;
-                                  if (error.message?.includes('Network Error') || error.code === 'NETWORK_ERROR') {
-                                    errorMessage += 'Network error - make sure the wallet extension is installed and unlocked';
-                                  } else if (error.message?.includes('User rejected') || error.code === 4001) {
-                                    errorMessage += 'Connection rejected by user';
-                                  } else if (error.message?.includes('not installed')) {
-                                    errorMessage += 'Wallet extension not installed';
-                                  } else {
-                                    errorMessage += error.message || 'Unknown error';
-                                  }
-                                  
-                                  alert(errorMessage);
-                                }
+                                errorMessage += error.message || 'Unknown error';
                               }
+                              
+                              alert(errorMessage);
                             }
                           }}
                           style={{
@@ -395,7 +343,92 @@ function App() {
                             fontSize: '16px'
                           }}
                         >
-                          Connect
+                          Connect Petra
+                        </button>
+                        
+                        <button 
+                          onClick={() => {
+                            // Connect to Pontem wallet
+                            const wallet = wallets.find(w => w.name === 'Pontem');
+                            if (!wallet) {
+                              console.error('[Wallet Connection] Pontem wallet not found');
+                              alert('Pontem wallet not found');
+                              return;
+                            }
+                            
+                            console.log('[Wallet Connection] Connecting to Pontem wallet');
+                            setSelectedWallet('Pontem');
+                            
+                            try {
+                              connectAptos(wallet.name);
+                              console.log('[Wallet Connection] Successfully initiated Pontem connection');
+                            } catch (error: any) {
+                              console.error('[Wallet Connection] Connection failed:', error);
+                              
+                              let errorMessage = 'Failed to connect Pontem wallet: ';
+                              if (error.message?.includes('not installed')) {
+                                errorMessage += 'Please install the Pontem wallet extension';
+                              } else {
+                                errorMessage += error.message || 'Unknown error';
+                              }
+                              
+                              alert(errorMessage);
+                            }
+                          }}
+                          style={{
+                            padding: '10px 20px',
+                            borderRadius: '4px',
+                            backgroundColor: '#6B46C1',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '16px'
+                          }}
+                        >
+                          Connect Pontem
+                        </button>
+                        
+                        <button 
+                          onClick={() => {
+                            // Connect to Rise wallet
+                            const wallet = wallets.find(w => w.name === 'Rise');
+                            if (!wallet) {
+                              console.error('[Wallet Connection] Rise wallet not found');
+                              alert('Rise wallet not found. Please install the Rise wallet extension.');
+                              return;
+                            }
+                            
+                            console.log('[Wallet Connection] Connecting to Rise wallet');
+                            setSelectedWallet('Rise');
+                            
+                            try {
+                              connectAptos(wallet.name);
+                              console.log('[Wallet Connection] Successfully initiated Rise connection');
+                            } catch (error: any) {
+                              console.error('[Wallet Connection] Connection failed:', error);
+                              
+                              let errorMessage = 'Failed to connect Rise wallet: ';
+                              if (error.message?.includes('not installed')) {
+                                errorMessage += 'Please install the Rise wallet extension';
+                              } else {
+                                errorMessage += error.message || 'Unknown error';
+                              }
+                              
+                              alert(errorMessage);
+                            }
+                          }}
+                          style={{
+                            padding: '10px 20px',
+                            borderRadius: '4px',
+                            backgroundColor: '#E74C3C',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            marginTop: '10px'
+                          }}
+                        >
+                          Connect Rise
                         </button>
                       </>
                     ) : (

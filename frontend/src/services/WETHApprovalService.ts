@@ -43,7 +43,7 @@ export class WETHApprovalService {
       console.error('Error checking WETH approval:', error);
       return {
         hasApproval: false,
-        currentAllowance: 0n,
+        currentAllowance: BigInt(0),
         needsApproval: true
       };
     }
@@ -64,7 +64,7 @@ export class WETHApprovalService {
       const maxApproval = ethers.MaxUint256;
       
       console.log('🔐 Requesting WETH approval for escrow contract...');
-      const tx = await wethWithSigner.approve(this.escrowAddress, maxApproval);
+      const tx = await (wethWithSigner as any).approve(this.escrowAddress, maxApproval);
       
       console.log('⏳ Waiting for approval confirmation...');
       const receipt = await tx.wait();

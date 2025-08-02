@@ -15,6 +15,7 @@ function toHex(uint8array: Uint8Array): string {
 
 interface EscrowParams {
   escrowId: Uint8Array;
+  depositor: string;
   beneficiary: string;
   amount: string;
   hashlock: Uint8Array;
@@ -23,7 +24,7 @@ interface EscrowParams {
   resolverAddress: string;
 }
 
-export class SponsoredTransactionV2 {
+export class SponsoredTransactionV3 {
   private aptos: Aptos;
 
   constructor(network: Network = Network.TESTNET) {
@@ -32,19 +33,20 @@ export class SponsoredTransactionV2 {
   }
 
   /**
-   * Build a transaction that will be sponsored by the resolver
-   * The user signs as sender, resolver signs as fee payer
+   * Build a regular transaction that will be sponsored by the resolver
+   * This follows the Shinami pattern - NOT multi-agent
    */
   async buildSponsoredEscrowTransaction(
     userAddress: string,
     params: EscrowParams
   ): Promise<SimpleTransaction> {
     // Build transaction with fee payer flag
+    // Use create_escrow_user_funded - user pays APT, resolver pays gas
     const transaction = await this.aptos.transaction.build.simple({
       sender: userAddress,
       withFeePayer: true, // Critical: Enable fee payer mode
       data: {
-        // Use create_escrow_user_funded - user pays APT, resolver pays gas
+        // Regular function that only requires sender signature
         function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded',
         typeArguments: [],
         functionArguments: [
@@ -63,19 +65,8 @@ export class SponsoredTransactionV2 {
   }
 
   /**
-   * Get the user to sign the transaction as sender
-   */
-  async getUserSignature(
-    transaction: SimpleTransaction
-  ): Promise<AccountAuthenticator> {
-    // This will be called by the wallet
-    // In practice, we'll pass the transaction to the wallet
-    // and it will return the signature
-    throw new Error('This should be signed by the user wallet');
-  }
-
-  /**
    * Prepare transaction data for sending to resolver
+   * The resolver will add fee payer signature and submit
    */
   serializeTransactionForResolver(
     transaction: SimpleTransaction,
@@ -92,18 +83,18 @@ export class SponsoredTransactionV2 {
 }
 
 /**
- * Example flow:
+ * Example flow (Shinami pattern):
  * 
  * 1. Frontend builds the sponsored transaction:
- *    const sponsoredTx = new SponsoredTransactionV2();
+ *    const sponsoredTx = new SponsoredTransactionV3();
  *    const transaction = await sponsoredTx.buildSponsoredEscrowTransaction(userAddress, params);
  * 
- * 2. User signs as sender (via wallet):
- *    const userAuth = await wallet.signTransaction(transaction);
+ * 2. User signs as sender using wallet adapter:
+ *    const userAuth = await walletAdapter.signTransaction(transaction);
  * 
  * 3. Send to resolver for fee payer signature:
  *    const data = sponsoredTx.serializeTransactionForResolver(transaction, userAuth);
- *    socket.emit('order:signed:sponsored:v2', { ...data });
+ *    socket.emit('order:signed:sponsored:v3', { ...data });
  * 
  * 4. Resolver signs as fee payer and submits:
  *    - Deserialize transaction and user signature
