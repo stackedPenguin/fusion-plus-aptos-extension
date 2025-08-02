@@ -118,7 +118,7 @@ export class ResolverServiceV2 {
   private setupSocketListeners() {
     this.socket.on('connect', () => {
       console.log('Connected to order engine');
-      console.log('Listening for events: order:new, escrow:source:created, order:signed, order:signed:sponsored:v2, order:signed:with:permit');
+      console.log('Listening for events: order:new, escrow:source:created, order:signed, order:signed:sponsored:v2, order:signed:sponsored:v3, order:signed:with:permit');
       this.socket.emit('subscribe:active');
     });
 
@@ -242,7 +242,7 @@ export class ResolverServiceV2 {
 
     // Log all events for debugging
     this.socket.onAny((eventName, ...args) => {
-      if (!['order:new', 'escrow:source:created', 'order:signed', 'order:signed:sponsored', 'order:signed:sponsored:v2', 'order:signed:with:permit', 'connect', 'disconnect'].includes(eventName)) {
+      if (!['order:new', 'escrow:source:created', 'order:signed', 'order:signed:sponsored', 'order:signed:sponsored:v2', 'order:signed:sponsored:v3', 'order:signed:with:permit', 'connect', 'disconnect'].includes(eventName)) {
         console.log(`[Socket Event] ${eventName}`);
       }
     });
