@@ -58,6 +58,11 @@ export class SponsoredTransactionV3 {
           params.safetyDeposit,
           params.resolverAddress
         ]
+      },
+      options: {
+        maxGasAmount: 100000, // Reduced from 200000
+        gasUnitPrice: 100,
+        expireTimestamp: Math.floor(Date.now() / 1000) + 30 // 30 seconds
       }
     });
 

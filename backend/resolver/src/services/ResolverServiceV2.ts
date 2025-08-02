@@ -1924,7 +1924,10 @@ export class ResolverServiceV2 {
       // 4. Wait for confirmation
       const executedTx = await aptos.waitForTransaction({
         transactionHash: pendingTx.hash,
-        options: { checkSuccess: true }
+        options: { 
+          checkSuccess: true,
+          timeoutSecs: 60 // Increase timeout to 60 seconds
+        }
       });
 
       if (!executedTx.success) {
@@ -1964,12 +1967,48 @@ export class ResolverServiceV2 {
         });
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('   ❌ Failed to process sponsored transaction V3:', error);
+      
+      // Check if it's a timeout error
+      if (error.message?.includes('timed out')) {
+        console.log('   ⏱️ Transaction timed out, checking status...');
+        try {
+          // Try to get the transaction directly
+          const txStatus = await aptos.getTransactionByHash({ 
+            transactionHash: error.lastSubmittedTransaction?.hash 
+          });
+          console.log('   📊 Transaction status:', txStatus);
+          
+          if (txStatus && 'success' in txStatus && txStatus.success) {
+            console.log('   ✅ Transaction actually succeeded despite timeout!');
+            
+            // Continue with success flow
+            const escrowIdBytes = signedOrder.orderMessage.escrow_id;
+            const escrowId = '0x' + Buffer.from(escrowIdBytes).toString('hex');
+            
+            this.socket.emit('escrow:source:created', {
+              orderId: signedOrder.orderId,
+              escrowId,
+              chain: 'APTOS',
+              txHash: error.lastSubmittedTransaction?.hash,
+              amount: signedOrder.fromAmount,
+              secretHash: signedOrder.secretHash,
+              userFunded: true
+            });
+            
+            return;
+          }
+        } catch (checkError) {
+          console.error('   Failed to check transaction status:', checkError);
+        }
+      }
+      
       this.socket.emit('order:error', {
         orderId: signedOrder.orderId,
         error: 'Failed to sponsor transaction',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error.message || 'Unknown error',
+        txHash: error.lastSubmittedTransaction?.hash
       });
     }
   }
