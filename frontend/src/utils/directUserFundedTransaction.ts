@@ -60,22 +60,18 @@ export class DirectUserFundedTransaction {
    * Convert to wallet-compatible format
    */
   prepareForWallet(params: EscrowParams): any {
-    // Convert Uint8Arrays to hex strings for wallet compatibility
-    const toHex = (uint8array: Uint8Array): string => {
-      return '0x' + Array.from(uint8array)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-    };
-
+    // For vector<u8> arguments in Move, wallets expect arrays, not hex strings
+    // The wallet will handle the encoding internally
+    
     return {
       type: 'entry_function_payload',
       function: `${this.escrowModule}::create_escrow_user_funded`,
       type_arguments: [],
       arguments: [
-        toHex(params.escrowId),
+        Array.from(params.escrowId),  // Keep as array
         params.beneficiary,
         params.amount,
-        toHex(params.hashlock),
+        Array.from(params.hashlock),  // Keep as array
         params.timelock.toString(),
         params.safetyDeposit,
         params.resolverAddress
