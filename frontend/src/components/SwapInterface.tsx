@@ -1187,9 +1187,18 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             <div className="token-balance">
               {fromChain === Chain.ETHEREUM ? (
                 <>
-                  <span>ETH: {ethBalance}</span>
-                  {parseFloat(wethBalance) > 0 && (
-                    <span style={{ marginLeft: '10px' }}>WETH: {parseFloat(wethBalance).toFixed(4)}</span>
+                  {selectedToken === 'ETH' ? (
+                    <>
+                      <span>ETH: {ethBalance}</span>
+                      {parseFloat(wethBalance) > 0 && (
+                        <span style={{ marginLeft: '10px' }}>WETH: {parseFloat(wethBalance).toFixed(4)}</span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <span>WETH: {parseFloat(wethBalance).toFixed(4)}</span>
+                      <span style={{ marginLeft: '10px' }}>ETH: {ethBalance}</span>
+                    </>
                   )}
                 </>
               ) : (

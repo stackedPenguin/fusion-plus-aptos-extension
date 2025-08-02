@@ -281,40 +281,20 @@ function App() {
                   <div className="wallet-options" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {wallets && wallets.length > 0 ? (
                       <>
-                        <select 
-                          value={selectedWallet} 
-                          onChange={(e) => setSelectedWallet(e.target.value)}
-                          style={{
-                            padding: '8px',
-                            borderRadius: '4px',
-                            backgroundColor: '#333',
-                            color: '#fff',
-                            border: '1px solid #555'
-                          }}
-                        >
-                          <option value="">Select Wallet</option>
-                          {/* Filter out duplicate wallets by name */}
-                          {wallets
-                            .filter((wallet, index, self) => 
-                              index === self.findIndex(w => w.name === wallet.name)
-                            )
-                            .map((wallet) => (
-                              <option key={wallet.name} value={wallet.name}>
-                                {wallet.name}
-                              </option>
-                            ))}
-                        </select>
                         <button 
                           onClick={() => {
-                            if (selectedWallet) {
-                              console.log(`[Wallet Connection] Starting connection process for: ${selectedWallet}`);
-                              console.log(`[Wallet Connection] Available wallets:`, wallets.map(w => ({ 
-                                name: w.name, 
-                                readyState: (w as any).readyState,
-                                installed: !!(window as any)[w.name.toLowerCase()]
-                              })));
-                              
-                              const wallet = wallets.find(w => w.name === selectedWallet);
+                            // Always use Petra wallet
+                            const selectedWallet = 'Petra';
+                            setSelectedWallet(selectedWallet);
+                            
+                            console.log(`[Wallet Connection] Connecting to Petra wallet`);
+                            console.log(`[Wallet Connection] Available wallets:`, wallets.map(w => ({ 
+                              name: w.name, 
+                              readyState: (w as any).readyState,
+                              installed: !!(window as any)[w.name.toLowerCase()]
+                            })));
+                            
+                            const wallet = wallets.find(w => w.name === 'Petra');
                               if (!wallet) {
                                 console.error(`[Wallet Connection] Wallet ${selectedWallet} not found in wallets array`);
                                 alert(`Wallet ${selectedWallet} not found`);
@@ -405,9 +385,14 @@ function App() {
                               }
                             }
                           }}
-                          disabled={!selectedWallet}
                           style={{
-                            opacity: selectedWallet ? 1 : 0.5
+                            padding: '10px 20px',
+                            borderRadius: '4px',
+                            backgroundColor: '#4CAF50',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '16px'
                           }}
                         >
                           Connect
