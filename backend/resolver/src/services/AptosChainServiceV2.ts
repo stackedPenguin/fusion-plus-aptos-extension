@@ -124,7 +124,7 @@ export class AptosChainServiceV2 {
       try {
         const escrowExists = await this.aptos.view({
           payload: {
-            function: `${this.escrowAddress}::escrow::escrow_exists`,
+            function: `${this.escrowAddress}::escrow_v2::escrow_exists`,
             typeArguments: [],
             functionArguments: [Array.from(escrowId)]
           }
@@ -150,7 +150,7 @@ export class AptosChainServiceV2 {
           const transaction = await this.aptos.transaction.build.simple({
             sender: this.account.accountAddress,
             data: {
-              function: `${this.escrowAddress}::escrow::withdraw`,
+              function: `${this.escrowAddress}::escrow_v2::withdraw`,
               typeArguments: [],
               functionArguments: [
                 Array.from(escrowId),
