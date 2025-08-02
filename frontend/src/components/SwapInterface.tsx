@@ -469,61 +469,59 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 const useBackendSponsorship = walletType === 'petra' || (!supportsSponsoredTx && !useMultiAgent);
                 
                 if (useBackendSponsorship) {
-                  console.log('Using backend sponsorship with permit pattern');
-                  await logger.logSwapStep('✨ Gasless transaction', 'Please sign permit for APT withdrawal');
-                  await logger.logSwapStep('💰 Your APT will be used', 'Resolver only pays network fees');
+                  console.log('Using direct user-funded transaction (user pays APT + gas)');
+                  await logger.logSwapStep('💰 Creating escrow with YOUR APT', 'You will pay both APT and gas fees');
                   
                   try {
-                    // Generate permit parameters
-                    const permitParams: EscrowPermitParams = {
+                    // Import direct user-funded transaction builder
+                    const { DirectUserFundedTransaction } = await import('../utils/directUserFundedTransaction');
+                    const directTx = new DirectUserFundedTransaction();
+                    
+                    // Prepare escrow parameters
+                    const escrowParams = {
                       escrowId: signedIntent.orderMessage.escrow_id,
-                      amount: currentOrderData.fromAmount,
                       beneficiary: CONTRACTS.RESOLVER.APTOS,
+                      amount: currentOrderData.fromAmount,
                       hashlock: signedIntent.orderMessage.hashlock,
-                      timelock: signedIntent.orderMessage.timelock.toString(),
-                      nonce: Date.now().toString(),
-                      expiry: (Math.floor(Date.now() / 1000) + 300).toString() // 5 minutes
+                      timelock: signedIntent.orderMessage.timelock,
+                      safetyDeposit: '100000', // 0.001 APT
+                      resolverAddress: CONTRACTS.RESOLVER.APTOS
                     };
                     
-                    // Generate permit message
-                    const permitMessage = PermitSigner.generatePermitMessage(permitParams);
-                    console.log('Permit message:', permitMessage);
+                    // Build transaction payload for wallet
+                    const payload = directTx.prepareForWallet(escrowParams);
+                    console.log('Direct user-funded transaction payload:', payload);
                     
-                    // Request user to sign permit
-                    await logger.logSwapStep('🔐 Sign permit', 'Authorizing APT withdrawal');
-                    const permitSignature = await PermitSigner.signPermitWithWallet(
-                      permitMessage,
-                      (window as any).aptos || (window as any)[walletType?.toLowerCase() || 'aptos']
-                    );
+                    await logger.logSwapStep('🔐 Sign transaction', 'Creating escrow with your APT');
                     
-                    console.log('Permit signed:', permitSignature);
-                    await logger.logSwapStep('✅ Permit signed', 'Sending to resolver');
+                    // Submit transaction through wallet
+                    let txResponse;
+                    if ((window as any).aptos?.signAndSubmitTransaction) {
+                      txResponse = await (window as any).aptos.signAndSubmitTransaction(payload);
+                    } else if ((window as any).petra?.signAndSubmitTransaction) {
+                      txResponse = await (window as any).petra.signAndSubmitTransaction(payload);
+                    } else {
+                      throw new Error('No compatible wallet found');
+                    }
                     
-                    // Create permit object
-                    const permit = PermitSigner.createPermitObject(
-                      permitParams,
-                      permitSignature.signature,
-                      permitSignature.publicKey
-                    );
+                    console.log('Transaction submitted:', txResponse);
+                    const txHash = txResponse.hash || txResponse;
                     
-                    socket.emit('order:signed:with:permit', {
+                    await logger.logSwapStep('✅ Transaction submitted', `Hash: ${txHash}`);
+                    await logger.logSwapStep('💳 Your APT used for escrow', 'Waiting for confirmation...');
+                    
+                    // Emit the escrow created event
+                    socket.emit('escrow:source:created', {
                       orderId: data.orderId,
-                      orderMessage: signedIntent.orderMessage,
-                      signature: signedIntent.signature,
-                      publicKey: signedIntent.publicKey,
-                      fullMessage: signedIntent.fullMessage,
-                      fromChain: 'APTOS',
-                      toChain: 'ETHEREUM',
-                      fromAmount: currentOrderData.fromAmount,
-                      toAmount: currentOrderData.minToAmount,
-                      secretHash: userSecretHash,
-                      permit // Include permit for proper user fund withdrawal
+                      escrowId: Array.from(signedIntent.orderMessage.escrow_id),
+                      transactionHash: txHash,
+                      userFunded: true,
+                      gaslessForUser: false, // User paid both APT and gas
+                      chain: 'APTOS',
+                      secretHash: userSecretHash
                     });
-                  } catch (permitError: any) {
-                    console.error('Failed to sign permit:', permitError);
-                    await logger.logSwapStep('⚠️ Permit signing failed', 'Falling back to resolver funds');
                     
-                    // Fallback to current method (resolver funds - NOT SAFE FOR PRODUCTION)
+                    // Also send the signed order for tracking
                     socket.emit('order:signed', {
                       orderId: data.orderId,
                       orderMessage: signedIntent.orderMessage,
@@ -534,8 +532,16 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                       toChain: 'ETHEREUM',
                       fromAmount: currentOrderData.fromAmount,
                       toAmount: currentOrderData.minToAmount,
-                      secretHash: userSecretHash
+                      secretHash: userSecretHash,
+                      userFundedTx: txHash // Mark this as user-funded
                     });
+                    
+                    await logger.logSwapStep('✅ APT escrow created', 'Your APT is now locked');
+                    
+                  } catch (userFundedError: any) {
+                    console.error('Failed to create user-funded escrow:', userFundedError);
+                    await logger.logSwapStep('❌ Transaction failed', userFundedError.message);
+                    throw userFundedError; // Don't fallback to resolver funds
                   }
                 } else if (useMultiAgent && walletType === 'martian') {
                   // Multi-agent transaction flow for Martian wallet

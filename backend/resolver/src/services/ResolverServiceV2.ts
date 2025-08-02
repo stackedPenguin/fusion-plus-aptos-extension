@@ -1161,13 +1161,23 @@ export class ResolverServiceV2 {
   }
 
   private async handleSignedAptosOrder(signedOrder: any): Promise<void> {
-    console.log('\n🔏 Processing signed Aptos order (gasless flow)');
+    console.log('\n🔏 Processing signed Aptos order');
     
     try {
       // Get the original order
       const order = this.activeOrders.get(signedOrder.orderId);
       if (!order) {
         console.log('   ❌ Order not found');
+        return;
+      }
+      
+      // Check if user already created the escrow themselves
+      if (signedOrder.userFundedTx) {
+        console.log('   ✅ User already created escrow with their own funds');
+        console.log('   💳 Transaction hash:', signedOrder.userFundedTx);
+        console.log('   🔄 Skipping resolver escrow creation');
+        
+        // The escrow:source:created event will handle the rest of the flow
         return;
       }
       
@@ -1185,7 +1195,7 @@ export class ResolverServiceV2 {
         return;
       }
       
-      console.log('   🔄 Creating APT escrow on-chain (gasless for user)...');
+      console.log('   🔄 Creating APT escrow on-chain (resolver funds - DEPRECATED)...');
       
       const escrowModule = process.env.APTOS_ESCROW_MODULE || process.env.APTOS_ESCROW_ADDRESS;
       
@@ -1600,16 +1610,20 @@ export class ResolverServiceV2 {
       console.log('      - Expiry:', permit.expiry);
       console.log('      - Amount:', permit.amount);
       
-      // For hackathon, we'll still use create_escrow_delegated but log that
-      // in production this would use create_escrow_from_permit
-      console.log('   ⚠️  Note: Still using resolver funds for hackathon');
-      console.log('   ✅ In production: Would use create_escrow_from_permit with user funds');
+      // IMPORTANT: For permit-based flow, we need the user to actually sign a transaction
+      // The permit is just their intent, but Aptos requires them to be a signer to withdraw their funds
+      // This is why we're falling back to multi-agent transaction approach
       
-      // Call the existing handler which uses create_escrow_delegated
+      console.log('   ⚠️  Permit-based flow requires user to sign transaction');
+      console.log('   🔄 User should use multi-agent transaction for true user-funded escrow');
+      console.log('   📝 Frontend should build multi-agent tx with create_escrow_user_funded');
+      
+      // For now, still using resolver funds but we need to fix the frontend
+      // to properly build and sign multi-agent transactions
       await this.handleSignedAptosOrder(signedOrder);
       
-      // Log that this should withdraw from user
-      console.log('   📝 Permit validated - user authorized withdrawal of', permit.amount, 'APT');
+      console.log('   ❌ WARNING: Still using resolver funds - frontend needs update');
+      console.log('   📝 To fix: Frontend must use MultiAgentTransaction with create_escrow_user_funded');
       
     } catch (error) {
       console.error('Failed to handle permit-based order:', error);

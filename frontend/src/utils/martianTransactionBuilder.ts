@@ -37,9 +37,9 @@ export class MartianTransactionBuilder {
     safetyDeposit: string;
     resolverAddress: string;
   }): any {
-    // Use the correct module path: address::module::function
-    // The module is "escrow" under the "fusion_plus" package
-    const functionName = `0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow`;
+    // Use create_escrow_user_funded for true user-funded escrows
+    // This function withdraws from the user's account, not the resolver's
+    const functionName = `0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded`;
     
     // For vector<u8> arguments in Move, Martian expects hex strings with 0x prefix
     const toHex = (uint8array: Uint8Array): string => {
@@ -56,12 +56,13 @@ export class MartianTransactionBuilder {
       function: functionName,
       type_arguments: [],
       arguments: [
-        escrowIdHex,  // hex string for vector<u8>
-        params.beneficiary,  // address as string
-        params.amount,  // amount as string
-        hashlockHex,  // hex string for vector<u8>
-        params.timelock.toString(),  // timelock as string
-        params.safetyDeposit  // safety deposit as string
+        escrowIdHex,  // escrow_id: vector<u8>
+        params.beneficiary,  // beneficiary: address
+        params.amount,  // amount: u64
+        hashlockHex,  // hashlock: vector<u8>
+        params.timelock.toString(),  // timelock: u64
+        params.safetyDeposit,  // safety_deposit_amount: u64
+        params.resolverAddress  // resolver_address: address (for verification)
       ]
     };
   }
