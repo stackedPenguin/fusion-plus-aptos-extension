@@ -18,6 +18,7 @@ import {
 } from '@aptos-labs/ts-sdk';
 import { ApprovalBanner } from './ApprovalBanner';
 import { SponsoredTransactionV3 } from '../utils/sponsoredTransactionV3';
+import { GaslessWETHTransaction } from '../utils/gaslessWETHTransaction';
 import './SwapInterface.css';
 
 // Helper function to convert Uint8Array to hex string
@@ -209,12 +210,120 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       let signature: string;
 
       if (fromChain === Chain.ETHEREUM) {
-        // For WETH, ensure approval then create order
-        setSwapStatus({ stage: 'signing_intent', message: 'Creating order...' });
-        await logger.logSwapStep('📋 Creating WETH swap order');
+        // For WETH -> APT, use gasless meta-transaction
+        setSwapStatus({ stage: 'signing_intent', message: '✨ Signing gasless WETH transfer...' });
+        await logger.logSwapStep('✨ True Gasless WETH Swap', 'You only sign, resolver pays gas');
         
-        signature = await orderService.signOrder(orderData, ethSigner);
-        finalOrderData = { ...orderData, signature };
+        // Check if gasless escrow is deployed (you'll need to add this config)
+        const gaslessEscrowAddress = CONTRACTS.ETHEREUM.GASLESS_ESCROW || '';
+        if (!gaslessEscrowAddress) {
+          // Fallback to regular flow
+          signature = await orderService.signOrder(orderData, ethSigner);
+          finalOrderData = { ...orderData, signature };
+        } else {
+          // Check if user has approved WETH to gasless escrow
+          const wethContract = new ethers.Contract(
+            CONTRACTS.ETHEREUM.WETH,
+            [
+              'function allowance(address owner, address spender) view returns (uint256)',
+              'function approve(address spender, uint256 amount) returns (bool)'
+            ],
+            ethSigner.provider
+          );
+          
+          let allowance = await wethContract.allowance(ethAccount, gaslessEscrowAddress);
+          let userApprovedInThisSession = false;
+          
+          if (allowance < BigInt(swapAmount)) {
+            console.log('🔐 User needs to approve WETH to gasless escrow first');
+            const confirmApproval = window.confirm(
+              'To enable gasless swaps, you need to approve WETH spending (one-time setup).\n\n' +
+              'This will require one transaction with gas.\n' +
+              'After this, all future swaps will be gasless!\n\n' +
+              'Approve now?'
+            );
+            
+            if (confirmApproval) {
+              try {
+                setSwapStatus({ stage: 'signing_intent', message: '🔐 Approving WETH for gasless swaps...' });
+                const wethWithSigner = wethContract.connect(ethSigner) as any;
+                const approveTx = await wethWithSigner.approve(gaslessEscrowAddress, ethers.MaxUint256);
+                
+                setSwapStatus({ stage: 'signing_intent', message: '⏳ Waiting for approval confirmation...' });
+                await approveTx.wait();
+                
+                console.log('✅ WETH approved for gasless swaps!');
+                setSwapStatus({ stage: 'signing_intent', message: '✅ WETH approved! Continuing with gasless swap...' });
+                
+                // Small delay to ensure state updates
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Re-check allowance after approval
+                allowance = await wethContract.allowance(ethAccount, gaslessEscrowAddress);
+                userApprovedInThisSession = true;
+              } catch (error) {
+                console.error('Approval failed:', error);
+                alert('Approval failed. Please try again.');
+                setIsLoading(false);
+                return;
+              }
+            } else {
+              alert('Gasless swaps require WETH approval. Using regular flow instead.');
+              // Fallback to regular flow
+              signature = await orderService.signOrder(orderData, ethSigner);
+              finalOrderData = { ...orderData, signature };
+            }
+          }
+          
+          if (allowance >= BigInt(swapAmount) || allowance === ethers.MaxUint256) {
+            // Use gasless meta-transaction
+            const gaslessTx = new GaslessWETHTransaction(
+              await ethSigner.provider!,
+              gaslessEscrowAddress,
+              11155111 // Sepolia chain ID
+            );
+            
+            // Prepare escrow parameters
+            const sourceEscrowId = ethers.id(orderData.nonce + '-source-' + secretHash);
+            const escrowParams = {
+              escrowId: ethers.getBytes(sourceEscrowId),
+              depositor: ethAccount,
+              beneficiary: CONTRACTS.RESOLVER.ETHEREUM,
+              token: CONTRACTS.ETHEREUM.WETH,
+              amount: orderData.fromAmount,
+              hashlock: ethers.getBytes(secretHash),
+              timelock: orderData.deadline,
+              gaslessEscrowAddress
+            };
+            
+            // Sign meta-transaction (no gas)
+            const { signature: metaTxSig, deadline } = await gaslessTx.signMetaTx(
+              ethSigner,
+              escrowParams
+            );
+            
+            // Store the gasless transaction data
+            (window as any).__fusionPlusGaslessTx = {
+              escrowParams,
+              metaTxSignature: metaTxSig,
+              deadline,
+              orderId: null
+            };
+            
+            // Create order with gasless flag
+            signature = '0x00'; // Deferred for gasless
+            finalOrderData = {
+              ...orderData,
+              signature,
+              gasless: true,
+              gaslessData: gaslessTx.prepareGaslessEscrowData(escrowParams, metaTxSig, deadline)
+            };
+          } else if (!finalOrderData) {
+            // Fallback to regular order if gasless didn't work
+            signature = await orderService.signOrder(orderData, ethSigner);
+            finalOrderData = { ...orderData, signature };
+          }
+        }
         
       } else if (fromChain === Chain.APTOS) {
         // For APT -> ETH, sign the Fusion+ intent
@@ -641,10 +750,19 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             // Refresh APT balance
             if (data.destinationChain === 'APTOS' || data.toChain === 'APTOS') {
               try {
-                const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/accounts/' + aptosAccount + '/resource/0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
+                const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    function: '0x1::coin::balance',
+                    type_arguments: ['0x1::aptos_coin::AptosCoin'],
+                    arguments: [aptosAccount]
+                  })
+                });
                 if (response.ok) {
-                  const resource = await response.json();
-                  const balance = resource.data.coin.value;
+                  const balance = await response.json();
                   console.log('Updated APT balance:', (parseInt(balance) / 100000000).toFixed(6));
                 }
               } catch (error) {
@@ -691,8 +809,9 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       
       {/* Gasless explanation banner */}
       <div style={{
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        color: 'white',
+        background: 'rgba(29, 200, 114, 0.1)',
+        border: '1px solid rgba(29, 200, 114, 0.2)',
+        color: 'rgba(29, 200, 114, 0.9)',
         padding: '12px 16px',
         borderRadius: '8px',
         marginBottom: '16px',
@@ -701,7 +820,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       }}>
         <strong>🚀 100% Gasless</strong> - You pay NO gas fees! The resolver pays all transaction costs.
         <br />
-        <small style={{ opacity: 0.9 }}>Note: Wallets may display gas fees, but you won't be charged.</small>
+        <small style={{ opacity: 0.8, color: 'rgba(255, 255, 255, 0.6)' }}>Note: Wallets may display gas fees, but you won't be charged.</small>
       </div>
       
       {/* Show approval banner for WETH */}

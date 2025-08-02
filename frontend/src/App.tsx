@@ -319,142 +319,38 @@ function App() {
                     }}>Disconnect</button>
                   </>
                 ) : (
-                  <div className="wallet-options" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {wallets && wallets.length > 0 ? (
-                      <>
-                        <button 
-                          onClick={() => {
-                            // Connect to Petra wallet
-                            const wallet = wallets.find(w => w.name === 'Petra');
-                            if (!wallet) {
-                              console.error('[Wallet Connection] Petra wallet not found');
-                              alert('Petra wallet not found');
-                              return;
-                            }
-                            
-                            console.log('[Wallet Connection] Connecting to Petra wallet');
-                            setSelectedWallet('Petra');
-                            
-                            try {
-                              connectAptos(wallet.name);
-                              console.log('[Wallet Connection] Successfully initiated Petra connection');
-                            } catch (error: any) {
-                              console.error('[Wallet Connection] Connection failed:', error);
-                              
-                              let errorMessage = 'Failed to connect Petra wallet: ';
-                              if (error.message?.includes('not installed')) {
-                                errorMessage += 'Please install the Petra wallet extension';
-                              } else {
-                                errorMessage += error.message || 'Unknown error';
-                              }
-                              
-                              alert(errorMessage);
-                            }
-                          }}
-                          style={{
-                            padding: '10px 20px',
-                            borderRadius: '4px',
-                            backgroundColor: '#4CAF50',
-                            color: '#fff',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: '16px'
-                          }}
-                        >
-                          Connect Petra
-                        </button>
+                  <button 
+                    onClick={() => {
+                      // Connect to Petra wallet
+                      const wallet = wallets?.find(w => w.name === 'Petra');
+                      if (!wallet) {
+                        console.error('[Wallet Connection] Petra wallet not found');
+                        alert('Petra wallet not found. Please install the Petra wallet extension.');
+                        return;
+                      }
+                      
+                      console.log('[Wallet Connection] Connecting to Petra wallet');
+                      setSelectedWallet('Petra');
+                      
+                      try {
+                        connectAptos(wallet.name);
+                        console.log('[Wallet Connection] Successfully initiated Petra connection');
+                      } catch (error: any) {
+                        console.error('[Wallet Connection] Connection failed:', error);
                         
-                        <button 
-                          onClick={() => {
-                            // Connect to Pontem wallet
-                            const wallet = wallets.find(w => w.name === 'Pontem');
-                            if (!wallet) {
-                              console.error('[Wallet Connection] Pontem wallet not found');
-                              alert('Pontem wallet not found');
-                              return;
-                            }
-                            
-                            console.log('[Wallet Connection] Connecting to Pontem wallet');
-                            setSelectedWallet('Pontem');
-                            
-                            try {
-                              connectAptos(wallet.name);
-                              console.log('[Wallet Connection] Successfully initiated Pontem connection');
-                            } catch (error: any) {
-                              console.error('[Wallet Connection] Connection failed:', error);
-                              
-                              let errorMessage = 'Failed to connect Pontem wallet: ';
-                              if (error.message?.includes('not installed')) {
-                                errorMessage += 'Please install the Pontem wallet extension';
-                              } else {
-                                errorMessage += error.message || 'Unknown error';
-                              }
-                              
-                              alert(errorMessage);
-                            }
-                          }}
-                          style={{
-                            padding: '10px 20px',
-                            borderRadius: '4px',
-                            backgroundColor: '#6B46C1',
-                            color: '#fff',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: '16px'
-                          }}
-                        >
-                          Connect Pontem
-                        </button>
+                        let errorMessage = 'Failed to connect Petra wallet: ';
+                        if (error.message?.includes('not installed')) {
+                          errorMessage += 'Please install the Petra wallet extension';
+                        } else {
+                          errorMessage += error.message || 'Unknown error';
+                        }
                         
-                        <button 
-                          onClick={() => {
-                            // Connect to Rise wallet
-                            const wallet = wallets.find(w => w.name === 'Rise');
-                            if (!wallet) {
-                              console.error('[Wallet Connection] Rise wallet not found');
-                              alert('Rise wallet not found. Please install the Rise wallet extension.');
-                              return;
-                            }
-                            
-                            console.log('[Wallet Connection] Connecting to Rise wallet');
-                            setSelectedWallet('Rise');
-                            
-                            try {
-                              connectAptos(wallet.name);
-                              console.log('[Wallet Connection] Successfully initiated Rise connection');
-                            } catch (error: any) {
-                              console.error('[Wallet Connection] Connection failed:', error);
-                              
-                              let errorMessage = 'Failed to connect Rise wallet: ';
-                              if (error.message?.includes('not installed')) {
-                                errorMessage += 'Please install the Rise wallet extension';
-                              } else {
-                                errorMessage += error.message || 'Unknown error';
-                              }
-                              
-                              alert(errorMessage);
-                            }
-                          }}
-                          style={{
-                            padding: '10px 20px',
-                            borderRadius: '4px',
-                            backgroundColor: '#E74C3C',
-                            color: '#fff',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: '16px',
-                            marginTop: '10px'
-                          }}
-                        >
-                          Connect Rise
-                        </button>
-                      </>
-                    ) : (
-                      <button onClick={() => alert('No Aptos wallets detected')}>
-                        No Wallets Found
-                      </button>
-                    )}
-                  </div>
+                        alert(errorMessage);
+                      }
+                    }}
+                  >
+                    Connect
+                  </button>
                 )}
               </div>
             </div>

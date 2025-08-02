@@ -22,6 +22,21 @@ export const PermitSchema = z.object({
   deadline: z.number()
 });
 
+// Gasless data schema for meta-transactions
+export const GaslessDataSchema = z.object({
+  escrowId: z.string(),
+  depositor: z.string(),
+  beneficiary: z.string(),
+  token: z.string(),
+  amount: z.string(),
+  hashlock: z.string(),
+  timelock: z.string(),
+  deadline: z.string(),
+  metaTxV: z.number(),
+  metaTxR: z.string(),
+  metaTxS: z.string()
+});
+
 export const CreateOrderSchema = z.object({
   fromChain: z.nativeEnum(Chain),
   toChain: z.nativeEnum(Chain),
@@ -39,10 +54,14 @@ export const CreateOrderSchema = z.object({
   secretHashes: z.array(z.string()).optional(), // For partial fills using Merkle tree
   // Optional permit for automatic transfers
   permit: PermitSchema.optional(),
-  permitSignature: z.string().optional()
+  permitSignature: z.string().optional(),
+  // Optional gasless transaction data
+  gasless: z.boolean().optional(),
+  gaslessData: GaslessDataSchema.optional()
 });
 
 export type CreateOrderDto = z.infer<typeof CreateOrderSchema>;
+export type GaslessData = z.infer<typeof GaslessDataSchema>;
 
 export interface Order extends CreateOrderDto {
   id: string;
