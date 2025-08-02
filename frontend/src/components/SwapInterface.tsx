@@ -588,7 +588,8 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
               console.log('🔓 Revealing secret to resolver...');
               socket.emit('secret:reveal', {
                 orderId,
-                secret: (window as any).__fusionPlusSecret.secret
+                secret: (window as any).__fusionPlusSecret.secret,
+                secretHash: (window as any).__fusionPlusSecret.secretHash
               });
               
               setSwapStatus({
