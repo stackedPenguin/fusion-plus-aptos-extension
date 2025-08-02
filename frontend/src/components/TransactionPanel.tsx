@@ -102,16 +102,31 @@ const TransactionPanel: React.FC<TransactionPanelProps> = ({
       ));
     };
 
+    const handleSwapCompleted = (data: any) => {
+      setTransactions(prev => prev.map(tx => 
+        tx.id === data.orderId
+          ? { 
+              ...tx, 
+              status: 'completed',
+              toAmount: data.toAmount || tx.toAmount,
+              secret: data.secret || tx.secret
+            }
+          : tx
+      ));
+    };
+
     socket.on('order:created', handleOrderCreated);
     socket.on('escrow:destination:created', handleEscrowCreated);
     socket.on('escrow:source:withdrawn', handleEscrowWithdrawn);
     socket.on('order:failed', handleOrderFailed);
+    socket.on('swap:completed', handleSwapCompleted);
 
     return () => {
       socket.off('order:created', handleOrderCreated);
       socket.off('escrow:destination:created', handleEscrowCreated);
       socket.off('escrow:source:withdrawn', handleEscrowWithdrawn);
       socket.off('order:failed', handleOrderFailed);
+      socket.off('swap:completed', handleSwapCompleted);
     };
   }, [orderService]);
 

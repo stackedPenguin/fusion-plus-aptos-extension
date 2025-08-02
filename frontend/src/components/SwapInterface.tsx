@@ -613,6 +613,46 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           });
           setIsLoading(false);
           
+          // Refresh balances after swap completion
+          if (ethAccount && aptosAccount) {
+            console.log('Refreshing balances after swap completion...');
+            
+            // Refresh ETH/WETH balance
+            if (data.destinationChain === 'ETHEREUM' || data.toChain === 'ETHEREUM') {
+              try {
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const signer = await provider.getSigner();
+                const wethService = new WETHService(signer, CONTRACTS.ETHEREUM.WETH);
+                const wethBalance = await wethService.getBalance(ethAccount);
+                const ethBalance = await provider.getBalance(ethAccount);
+                
+                console.log('Updated WETH balance:', ethers.formatEther(wethBalance));
+                console.log('Updated ETH balance:', ethers.formatEther(ethBalance));
+                
+                // Update parent component's balance through callback if available
+                if ((window as any).__updateBalances) {
+                  (window as any).__updateBalances();
+                }
+              } catch (error) {
+                console.error('Failed to refresh ETH/WETH balance:', error);
+              }
+            }
+            
+            // Refresh APT balance
+            if (data.destinationChain === 'APTOS' || data.toChain === 'APTOS') {
+              try {
+                const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/accounts/' + aptosAccount + '/resource/0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
+                if (response.ok) {
+                  const resource = await response.json();
+                  const balance = resource.data.coin.value;
+                  console.log('Updated APT balance:', (parseInt(balance) / 100000000).toFixed(6));
+                }
+              } catch (error) {
+                console.error('Failed to refresh APT balance:', error);
+              }
+            }
+          }
+          
           // Reset form
           setTimeout(() => {
             setFromAmount('');

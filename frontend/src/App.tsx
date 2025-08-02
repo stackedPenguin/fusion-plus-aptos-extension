@@ -9,9 +9,6 @@ import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
 import { WalletTester } from './components/WalletTester';
 import { MartianWalletConnection } from './utils/martianWalletConnection';
-import SponsoredTxTest from './components/SponsoredTxTest';
-import SponsoredTxTestSDK from './components/SponsoredTxTestSDK';
-import SponsoredTxTestMock from './components/SponsoredTxTestMock';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -26,10 +23,8 @@ function App() {
   const { account: aptosAccount, connect: connectAptos, disconnect: disconnectAptos, wallets } = useWallet();
   const [aptosBalance, setAptosBalance] = useState<string>('0');
   const [orderService] = useState(() => new OrderService());
-  const [showWalletTester, setShowWalletTester] = useState(false);
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [martianConnected, setMartianConnected] = useState(false);
-  const [showSponsoredTxTest, setShowSponsoredTxTest] = useState(false);
 
   // Listen for Martian connection events
   useEffect(() => {
@@ -117,6 +112,48 @@ function App() {
       setAptosBalance('0');
     }
   }, [aptosAccount, martianConnected]);
+
+  // Create a global update balances function for SwapInterface
+  const updateAllBalances = async () => {
+    // Update ETH balance
+    if (ethSigner) {
+      try {
+        const address = await ethSigner.getAddress();
+        const balance = await ethSigner.provider?.getBalance(address);
+        if (balance) {
+          setEthBalance(ethers.formatEther(balance));
+        }
+      } catch (error) {
+        console.error('Failed to refresh ETH balance:', error);
+      }
+    }
+
+    // Update APT balance
+    const accountAddress = aptosAccount?.address || (window as any).__martianAccount?.address;
+    if (accountAddress) {
+      try {
+        const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/accounts/' + accountAddress + '/resources');
+        if (response.ok) {
+          const resources = await response.json();
+          const coinStore = resources.find((r: any) => r.type === '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>');
+          if (coinStore) {
+            const balance = coinStore.data.coin.value;
+            setAptosBalance((Number(balance) / 100000000).toFixed(6));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to refresh APT balance:', error);
+      }
+    }
+  };
+
+  // Make updateAllBalances globally available
+  useEffect(() => {
+    (window as any).__updateBalances = updateAllBalances;
+    return () => {
+      delete (window as any).__updateBalances;
+    };
+  }, [ethSigner, aptosAccount]);
 
   // Handle balance refresh events from SwapInterface
   useEffect(() => {
@@ -209,36 +246,17 @@ function App() {
           <div className="logo-section">
             <h1>Fusion+ Aptos Extension</h1>
             <span className="beta-badge">BETA</span>
-            <button 
-              onClick={() => setShowSponsoredTxTest(!showSponsoredTxTest)}
-              style={{
-                marginLeft: '20px',
-                padding: '5px 10px',
-                fontSize: '12px',
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              {showSponsoredTxTest ? 'Back to Swap' : 'Test Sponsored Tx'}
-            </button>
           </div>
           
           <div className="swap-container">
-            {showSponsoredTxTest ? (
-              <SponsoredTxTestMock />
-            ) : (
-              <SwapInterface
-                ethAccount={ethAccount}
-                aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
-                ethSigner={ethSigner}
-                orderService={orderService}
-                ethBalance={ethBalance}
-                aptosBalance={aptosBalance}
-              />
-            )}
+            <SwapInterface
+              ethAccount={ethAccount}
+              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
+              ethSigner={ethSigner}
+              orderService={orderService}
+              ethBalance={ethBalance}
+              aptosBalance={aptosBalance}
+            />
           </div>
         </div>
         
@@ -450,34 +468,6 @@ function App() {
             />
           </div>
           
-          <div className="sidebar-section">
-            <button 
-              onClick={() => setShowWalletTester(!showWalletTester)}
-              className="wallet-tester-toggle"
-              style={{
-                width: '100%',
-                padding: '10px',
-                marginTop: '10px',
-                background: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer'
-              }}
-            >
-              {showWalletTester ? 'Hide' : 'Show'} Wallet Tester
-            </button>
-            
-            {showWalletTester && (
-              <div style={{ 
-                marginTop: '10px',
-                maxHeight: '400px',
-                overflowY: 'auto'
-              }}>
-                <WalletTester />
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>
