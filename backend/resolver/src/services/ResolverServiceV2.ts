@@ -8,7 +8,27 @@ import { WETHService } from './WETHService';
 import { BalanceTracker } from './BalanceTracker';
 import dotenv from 'dotenv';
 import { createHash, randomBytes } from 'crypto';
-import { PartialFillSecretsManager } from '../../order-engine/src/utils/partialFillSecrets';
+// Simple partial fill utilities inline to avoid path issues
+class PartialFillSecretsManager {
+  static calculatePartialAmount(totalAmount: string, fillPercentage: number): string {
+    const total = ethers.getBigInt(totalAmount);
+    const partial = (total * BigInt(Math.floor(fillPercentage * 100))) / BigInt(10000);
+    return partial.toString();
+  }
+  
+  static getSecretIndex(cumulativeFillPercentage: number, fillThresholds: number[]): number {
+    for (let i = 0; i < fillThresholds.length; i++) {
+      if (cumulativeFillPercentage <= fillThresholds[i]) {
+        return i;
+      }
+    }
+    return fillThresholds.length;
+  }
+  
+  static generatePartialEscrowId(baseOrderId: string, fillIndex: number): string {
+    return ethers.id(`${baseOrderId}-partial-${fillIndex}`);
+  }
+}
 // CORRECTED: Import FeePayerRawTransaction instead of FeePayerTransaction
 import { 
   Deserializer, 
