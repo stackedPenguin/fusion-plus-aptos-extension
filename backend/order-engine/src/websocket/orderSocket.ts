@@ -160,6 +160,31 @@ export function setupOrderWebSocket(server: HttpServer, orderService: OrderServi
         io.to(`order:${data.orderId}`).emit('secret:reveal', data);
       }
     });
+    
+    // Relay partial fill events
+    socket.on('partial:fill:created', (data: any) => {
+      console.log('Relaying partial:fill:created event:', data);
+      io.emit('partial:fill:created', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('partial:fill:created', data);
+      }
+    });
+    
+    socket.on('partial:fill:completed', (data: any) => {
+      console.log('Relaying partial:fill:completed event:', data);
+      io.emit('partial:fill:completed', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('partial:fill:completed', data);
+      }
+    });
+    
+    socket.on('order:update', (data: any) => {
+      console.log('Relaying order:update event:', data);
+      io.emit('order:update', data);
+      if (data.orderId) {
+        io.to(`order:${data.orderId}`).emit('order:update', data);
+      }
+    });
 
     // Handle new order submissions
     socket.on('order:new', async (order: Order) => {

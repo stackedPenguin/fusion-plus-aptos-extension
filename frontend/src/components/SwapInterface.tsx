@@ -456,6 +456,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
       // Store order data and set current order for partial fill tracking
       const currentOrderData = orderData;
       setCurrentOrder({ ...orderData, id: orderId });
+      setPartialFills([]); // Clear any previous partial fills
       
       // Subscribe to order updates
       orderService.subscribeToOrderUpdates(orderId, async (update: any) => {
