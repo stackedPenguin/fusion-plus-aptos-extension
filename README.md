@@ -1,6 +1,8 @@
 # Fusion+ Aptos Extension
 
-Cross-chain atomic swap implementation between Ethereum and Aptos using the Fusion+ protocol.
+🚀 **True Gasless Cross-Chain Swaps** between Ethereum and Aptos using the Fusion+ protocol.
+
+✨ **Users pay ZERO gas fees** - Just sign transactions, resolver covers all gas costs!
 
 ## Quick Start Testing Guide
 
@@ -92,6 +94,18 @@ curl http://localhost:3001/api/orders/ORDER_ID
 4. Create a swap order
 5. Monitor order status in the Order History section
 
+### 5. Try Gasless WETH → APT Swaps
+
+🚀 **Experience true gasless swaps:**
+
+1. **Get WETH**: Wrap some ETH to WETH on Sepolia
+2. **One-Time Setup**: Approve WETH to gasless escrow (pays gas once)
+3. **Gasless Forever**: All future swaps are gasless!
+   - Select WETH → APT
+   - Sign meta-transaction (no gas)
+   - Receive APT automatically
+4. **Monitor Progress**: Watch real-time swap execution with zero fees
+
 ## Architecture Overview
 
 ```
@@ -113,16 +127,46 @@ curl http://localhost:3001/api/orders/ORDER_ID
 
 ## Key Features
 
-- **Gasless Swaps**: Users sign orders off-chain, resolvers pay gas
-- **Atomic Swaps**: Hashlock/timelock ensures secure cross-chain transfers
-- **Bidirectional**: Supports ETH→APT and APT→ETH swaps
-- **Safety Deposits**: Incentivizes resolvers to complete swaps
-- **Partial Fills**: Orders can be filled by multiple resolvers
+### 🌟 **Gasless WETH to APT Swaps**
+- **Zero Gas Fees**: Users pay no gas after one-time WETH approval
+- **Meta-Transactions**: EIP-712 signatures enable gasless WETH transfers
+- **Production Ready**: Deployed and tested on Sepolia + Aptos Testnet
+
+### 🔒 **Atomic Security**
+- **Hashlock/Timelock**: Cryptographic guarantees for cross-chain safety
+- **Trustless**: No custody risk, funds locked in smart contracts
+- **Resolver Incentives**: Safety deposits ensure completion
+
+### 🔄 **Cross-Chain Support**
+- **WETH → APT**: Gasless swaps using meta-transactions
+- **APT → WETH**: Sponsored transactions on Aptos
+- **Bidirectional**: Full support for both swap directions
+
+### ⚡ **User Experience**
+- **One-Click Approval**: Approve WETH once, swap forever gaslessly
+- **Real-Time Updates**: Live swap progress with asset flow tracking
+- **Auto-Complete**: Resolver handles all on-chain execution
 
 ## Contract Addresses (Testnet)
 
-- **Ethereum Escrow**: Deploy to Sepolia
-- **Aptos Escrow**: Deploy to Aptos Testnet
+### Ethereum (Sepolia)
+- **Regular Escrow**: `0x5Ea57C2Fb5f054E9bdBdb3449135f823439E1338`
+- **Gasless Escrow**: `0x4868C055E894f6C774960a175aD11Dec26f8475f` ✨
+- **WETH Token**: `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`
+
+### Aptos (Testnet)
+- **Escrow Module**: `0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca`
+
+## Technical Documentation
+
+📚 **Detailed Guides:**
+- **[Gasless WETH Swaps](./docs/GASLESS_WETH_SWAPS.md)** - Complete technical implementation
+- **[Deployment Summary](./GASLESS_DEPLOYMENT_SUMMARY.md)** - Contract deployment details
+- **[Testing Scripts](./scripts/)** - Utilities for testing gasless functionality
+
+🔧 **Smart Contracts:**
+- **[FusionPlusGaslessEscrow.sol](./contracts/ethereum/contracts/FusionPlusGaslessEscrow.sol)** - Gasless escrow with meta-transactions
+- **[Aptos Escrow Module](./contracts/aptos/)** - Cross-chain escrow on Aptos
 
 ## Development Mode
 
@@ -131,7 +175,26 @@ In production, proper signature validation must be implemented.
 
 ## Troubleshooting
 
+### General Issues
 1. **CORS errors**: Ensure backend is running before frontend
 2. **Connection issues**: Check you're on correct networks (Sepolia/Aptos Testnet)
 3. **Order creation fails**: Check browser console for detailed errors
 4. **WebSocket not connecting**: Verify order engine is running on port 3001
+
+### Gasless Swap Issues
+5. **"Gasless swaps require WETH approval"**: Approve WETH to gasless escrow contract first
+6. **Meta-transaction fails**: Check WETH balance and allowance using debug scripts
+7. **Escrow not found**: Ensure Aptos escrow module is deployed correctly
+8. **Signature errors**: Confirm MetaMask is connected and on Sepolia testnet
+
+### Debug Commands
+```bash
+# Check WETH approval status
+node scripts/check-weth-approval-gasless.js
+
+# Test gasless functionality  
+node scripts/test-gasless-weth.js
+
+# Decode failed transactions
+node scripts/decode-gasless-tx.js
+```
