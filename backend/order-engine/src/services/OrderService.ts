@@ -24,6 +24,7 @@ export class OrderService extends EventEmitter {
       id: uuidv4(),
       status: OrderStatus.PENDING,
       filledAmount: '0',
+      filledPercentage: 0,
       createdAt: new Date(),
       updatedAt: new Date(),
       fills: []

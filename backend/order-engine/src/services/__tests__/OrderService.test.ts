@@ -73,6 +73,8 @@ describe('OrderService', () => {
       const fill = await orderService.createFill(order.id, {
         resolver: '0xresolver',
         amount: '500000000000000000', // 0.5 ETH
+        fillPercentage: 50,
+        cumulativePercentage: 50,
         secretHash: '0xhash1',
         secretIndex: 0,
         status: 'PENDING'
@@ -94,6 +96,8 @@ describe('OrderService', () => {
       await orderService.createFill(order.id, {
         resolver: '0xresolver',
         amount: mockOrder.fromAmount,
+        fillPercentage: 100,
+        cumulativePercentage: 100,
         secretHash: '0xhash1',
         secretIndex: 0,
         status: 'PENDING'
