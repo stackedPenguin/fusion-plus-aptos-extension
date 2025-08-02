@@ -37,8 +37,8 @@ export class PartialFillSecretsManager {
     
     // Mock proofs for demo
     const merkleProofs: string[][] = secrets.map((_, i) => [
-      ethers.keccak256(`proof_${i}_0`),
-      ethers.keccak256(`proof_${i}_1`)
+      ethers.keccak256(ethers.toUtf8Bytes(`proof_${i}_0`)),
+      ethers.keccak256(ethers.toUtf8Bytes(`proof_${i}_1`))
     ]);
     
     return {
