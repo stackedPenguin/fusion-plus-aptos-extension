@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { OrderService, Chain } from '../services/OrderService';
@@ -7,11 +7,7 @@ import { WETHService } from '../services/WETHService';
 import { AssetFlowLogger } from '../services/AssetFlowLogger';
 import { CONTRACTS } from '../config/contracts';
 import {
-  Aptos,
-  AptosConfig,
   Network,
-  Account,
-  SimpleTransaction,
   Ed25519PublicKey,
   Ed25519Signature,
   AccountAuthenticatorEd25519
@@ -24,12 +20,6 @@ import { PartialFillSecretsManager } from '../utils/partialFillSecrets';
 import DutchAuctionProgress from './DutchAuctionProgress';
 import './SwapInterface.css';
 
-// Helper function to convert Uint8Array to hex string
-function toHex(uint8array: Uint8Array): string {
-  return Array.from(uint8array)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 interface SwapInterfaceProps {
   ethAccount: string | null;
@@ -49,7 +39,7 @@ const TOKEN_ICONS = {
 };
 
 interface SwapStatus {
-  stage: 'idle' | 'signing_intent' | 'submitting' | 'waiting' | 'escrow_created' | 'signing_tx' | 'processing' | 'claiming' | 'completed' | 'error';
+  stage: 'idle' | 'signing_intent' | 'submitting' | 'waiting' | 'escrow_created' | 'signing_tx' | 'processing' | 'claiming' | 'completed' | 'error' | 'checking_approval' | 'approving';
   message: string;
   orderId?: string;
   secretHash?: string;
@@ -75,8 +65,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [priceService] = useState(() => new PriceService());
   const [swapStatus, setSwapStatus] = useState<SwapStatus>({ stage: 'idle', message: '' });
   const [estimatedOutput, setEstimatedOutput] = useState<string>('');
-  const [ethPrice, setEthPrice] = useState<number>(0);
-  const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [partialFills, setPartialFills] = useState<any[]>([]);
@@ -114,8 +102,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           priceService.getUSDPrice('ETH'),
           priceService.getUSDPrice('APT')
         ]);
-        setEthPrice(wethRate);
-        setAptPrice(aptRate);
         
         if (fromChain === Chain.ETHEREUM) {
           setExchangeRate(wethRate / aptRate);
@@ -270,7 +256,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           );
           
           let allowance = await wethContract.allowance(ethAccount, gaslessEscrowAddress);
-          let userApprovedInThisSession = false;
           
           if (allowance < BigInt(swapAmount)) {
             console.log('🔐 User needs to approve WETH to gasless escrow first');
@@ -298,7 +283,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
                 
                 // Re-check allowance after approval
                 allowance = await wethContract.allowance(ethAccount, gaslessEscrowAddress);
-                userApprovedInThisSession = true;
               } catch (error) {
                 console.error('Approval failed:', error);
                 alert('Approval failed. Please try again.');
@@ -357,6 +341,57 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
             throw new Error('Failed to create gasless order. WETH approval is required.');
           }
       } else if (fromChain === Chain.APTOS) {
+        // For APT -> ETH, check WETH approval for destination escrow first
+        setSwapStatus({ stage: 'checking_approval', message: 'Checking WETH approval for destination escrow...' });
+        
+        const standardEscrowAddress = CONTRACTS.ETHEREUM.ESCROW;
+        const wethContract = new ethers.Contract(
+          CONTRACTS.ETHEREUM.WETH,
+          ['function allowance(address owner, address spender) view returns (uint256)', 'function approve(address spender, uint256 amount) returns (bool)'],
+          ethSigner
+        );
+        
+        let allowance = await wethContract.allowance(ethAccount, standardEscrowAddress);
+        const requiredAmount = ethers.parseEther(estimatedOutput);
+        
+        if (allowance < requiredAmount && allowance !== ethers.MaxUint256) {
+          console.log('🔐 WETH approval needed for destination escrow:', {
+            current: ethers.formatEther(allowance),
+            required: ethers.formatEther(requiredAmount),
+            escrow: standardEscrowAddress
+          });
+          
+          const approveForDestination = window.confirm(
+            `You need to approve WETH for the destination escrow contract.\n\n` +
+            `This allows the resolver to create a WETH escrow on your behalf.\n` +
+            `Current allowance: ${ethers.formatEther(allowance)} WETH\n` +
+            `Required: ${ethers.formatEther(requiredAmount)} WETH\n\n` +
+            `Click OK to approve, or Cancel to abort.`
+          );
+          
+          if (approveForDestination) {
+            try {
+              setSwapStatus({ stage: 'approving', message: '🔐 Approving WETH for destination escrow...' });
+              const approveTx = await wethContract.approve(standardEscrowAddress, ethers.MaxUint256);
+              
+              setSwapStatus({ stage: 'approving', message: '⏳ Waiting for approval confirmation...' });
+              await approveTx.wait();
+              
+              console.log('✅ WETH approved for destination escrow!');
+              setSwapStatus({ stage: 'checking_approval', message: '✅ WETH approved! Continuing...' });
+              
+              allowance = await wethContract.allowance(ethAccount, standardEscrowAddress);
+            } catch (error) {
+              console.error('Destination escrow approval failed:', error);
+              alert('WETH approval failed. Please try again.');
+              setIsLoading(false);
+              return;
+            }
+          } else {
+            throw new Error('WETH approval is required for APT → ETH swaps.');
+          }
+        }
+        
         // For APT -> ETH, sign the Fusion+ intent
         setSwapStatus({ stage: 'signing_intent', message: 'Signing Fusion+ intent...' });
         await logger.logSwapStep('🔏 Signing Fusion+ intent', 'Creating gasless swap order');
