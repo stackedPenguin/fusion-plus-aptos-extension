@@ -510,10 +510,13 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         (window as any).__fusionPlusSecret.orderId = orderId;
       }
 
-      // Store order data and set current order for partial fill tracking
-      const currentOrderData = finalOrderData || orderData;
-      setCurrentOrder({ ...currentOrderData, id: orderId });
-      setPartialFills([]); // Clear any previous partial fills
+              // Store order data and set current order for partial fill tracking
+        const currentOrderData = finalOrderData || orderData;
+        
+        // Reset APT escrow creation tracking for new orders
+        (window as any).__fusionPlusAPTEscrowsCreated = new Set();
+        setCurrentOrder({ ...currentOrderData, id: orderId });
+        setPartialFills([]); // Clear any previous partial fills
       
       // Subscribe to order updates
       orderService.subscribeToOrderUpdates(orderId, async (update: any) => {
@@ -546,7 +549,19 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                         // Handle source escrow creation based on swap direction
               if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
                 // For APT -> WETH swaps, automatically sign APT escrow transaction
+                
+                // Check if we've already created an APT escrow for this specific destination escrow
+                const createdEscrows = (window as any).__fusionPlusAPTEscrowsCreated || new Set();
+                const destinationEscrowId = data.escrowId;
+                
+                if (createdEscrows.has(destinationEscrowId)) {
+                  console.log('⏭️ APT escrow already created for this destination escrow, skipping');
+                  return;
+                }
+                
                 console.log('🔄 Triggering gasless APT escrow creation...');
+                createdEscrows.add(destinationEscrowId);
+                (window as any).__fusionPlusAPTEscrowsCreated = createdEscrows;
                 
                 const signedIntent = (window as any).__fusionPlusIntent;
                 if (!signedIntent) {
@@ -751,10 +766,21 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                   fullMessage: signedIntent.fullMessage,
                   fromChain: 'APTOS',
                   toChain: 'ETHEREUM',
-                  fromAmount: currentOrderData.fromAmount,
+                  fromAmount: aptEscrowAmount, // Use the actual partial amount that was signed
                   toAmount: currentOrderData.minToAmount,
                   secretHash: (window as any).__fusionPlusSecret?.secretHash || data.secretHash,
                   sponsoredTransaction: serializedData
+                });
+                
+                // Notify backend about the APT escrow creation with the correct escrow ID
+                console.log(`📤 Notifying backend about APT escrow creation with ID: ${ethers.hexlify(aptEscrowId)}`);
+                socket.emit('escrow:source:created', {
+                  orderId: data.orderId,
+                  chain: 'APTOS',
+                  escrowId: Array.from(aptEscrowId), // Send as array format
+                  amount: aptEscrowAmount,
+                  secretHash: (window as any).__fusionPlusSecret?.secretHash || data.secretHash,
+                  userFunded: true
                 });
                 
                 setSwapStatus({

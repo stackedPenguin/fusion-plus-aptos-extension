@@ -1767,6 +1767,22 @@ export class ResolverServiceV2 {
         console.log('   📝 Order ID:', order.id);
         console.log('   📝 Secret (hex):', ethers.hexlify(secret));
         
+        // Check if escrow exists before trying to withdraw
+        console.log('   🔍 Verifying APT escrow exists before withdrawal...');
+        const escrowExists = await this.chainService.checkAptosEscrowExists(escrowIdBytes);
+        console.log('   📋 Escrow exists check result:', escrowExists);
+        
+        if (!escrowExists) {
+          console.error('   ❌ CRITICAL: APT escrow does not exist on chain!');
+          console.error('   📝 Expected escrow ID:', ethers.hexlify(escrowIdBytes));
+          console.error('   🧩 This might indicate:');
+          console.error('      1. User\'s APT escrow transaction failed');
+          console.error('      2. Escrow ID mismatch between frontend and backend');
+          console.error('      3. Wrong Aptos contract being used');
+          throw new Error(`APT escrow ${ethers.hexlify(escrowIdBytes)} does not exist on Aptos chain. User's escrow creation may have failed.`);
+        }
+        
+        console.log('   ✅ APT escrow confirmed to exist, proceeding with withdrawal...');
         withdrawTx = await this.chainService.withdrawAptosEscrow(
           escrowIdBytes,
           secret
@@ -1880,11 +1896,23 @@ export class ResolverServiceV2 {
         console.log('   🔓 Withdrawing from WETH escrow to transfer funds to user...');
         
         try {
-          // Withdraw from Ethereum escrow - this will automatically transfer WETH to the user
-          const ethTxHash = await this.chainService.withdrawEthereumEscrow(
-            destEscrowId,
-            ethers.hexlify(secret)
-          );
+          // For gasless orders (especially partial fills), use gasless escrow withdrawal
+          // For regular orders, use regular escrow withdrawal
+          let ethTxHash: string;
+          
+          if (order.gasless) {
+            console.log('   🎯 Gasless order detected - using gasless escrow withdrawal');
+            ethTxHash = await this.chainService.withdrawGaslessEscrow(
+              destEscrowId,
+              ethers.hexlify(secret)
+            );
+          } else {
+            console.log('   🏦 Regular order - using standard escrow withdrawal');
+            ethTxHash = await this.chainService.withdrawEthereumEscrow(
+              destEscrowId,
+              ethers.hexlify(secret)
+            );
+          }
           
           console.log(`   ✅ WETH withdrawal successful! Funds transferred to user.`);
           console.log(`   📄 Ethereum transaction: ${ethTxHash}`);
@@ -1915,24 +1943,66 @@ export class ResolverServiceV2 {
         }
       }
       
-      console.log('   🎉 Swap completed automatically! User received funds without manual claiming.');
+      console.log('   🎉 Fill completed automatically! User received funds for this portion.');
       
-      // Update final status
+      // Update final status for this fill
       await this.updateFillStatus(fill.orderId, fill.id, 'COMPLETED');
       
-      // Emit swap completed event
-      this.socket.emit('swap:completed', {
-        orderId: order.id,
-        fromChain: order.fromChain,
-        toChain: order.toChain,
-        fromAmount: order.fromAmount,
-        toAmount: fill.amount,
-        secretHash: fill.secretHash,
-        message: 'Swap completed successfully!'
-      });
+      // For partial fill orders, check if the entire order is now complete
+      const isPartialFillOrder = order.partialFillEnabled || order.partialFillAllowed;
       
-      // Clean up
-      this.monitoringFills.delete(destEscrowId);
+      if (isPartialFillOrder) {
+        // Get the latest order state to check total fill percentage
+        const latestOrder = this.activeOrders.get(order.id);
+        const totalFillPercentage = (latestOrder as any)?.filledPercentage || 0;
+        
+        console.log(`   📊 Order fill status: ${totalFillPercentage.toFixed(1)}% of total order completed`);
+        
+        if (totalFillPercentage >= 100) {
+          console.log('   🎉 Entire order now fully completed! All partial fills successful.');
+          this.socket.emit('swap:completed', {
+            orderId: order.id,
+            fromChain: order.fromChain,
+            toChain: order.toChain,
+            fromAmount: order.fromAmount,
+            toAmount: order.minToAmount, // Use the original expected amount
+            secretHash: fill.secretHash,
+            message: 'All partial fills completed successfully!'
+          });
+        } else {
+          console.log(`   ⏳ Partial fill completed, waiting for remaining ${(100 - totalFillPercentage).toFixed(1)}% to be filled`);
+          this.socket.emit('fill:completed', {
+            orderId: order.id,
+            fillId: fill.id,
+            fillPercentage: fill.fillPercentage || 0,
+            cumulativePercentage: totalFillPercentage,
+            message: `Fill ${(fill.fillPercentage || 0).toFixed(1)}% completed`
+          });
+        }
+      } else {
+        // Regular (non-partial) order - emit swap:completed immediately
+        console.log('   🎉 Regular order completed successfully!');
+        this.socket.emit('swap:completed', {
+          orderId: order.id,
+          fromChain: order.fromChain,
+          toChain: order.toChain,
+          fromAmount: order.fromAmount,
+          toAmount: fill.amount,
+          secretHash: fill.secretHash,
+          message: 'Swap completed successfully!'
+        });
+      }
+      
+      // Clean up - but only for completed orders or regular orders
+      const currentFillPercentage = isPartialFillOrder ? ((this.activeOrders.get(order.id) as any)?.filledPercentage || 0) : 100;
+      if (!isPartialFillOrder || currentFillPercentage >= 100) {
+        console.log('   🧹 Cleaning up monitoring data for completed order');
+        this.monitoringFills.delete(destEscrowId);
+      } else {
+        console.log('   📋 Keeping monitoring active for remaining partial fills');
+      }
+      
+      // Always clean up this specific fill's secret
       this.fillSecrets.delete(fill.id);
       
     } catch (error) {
@@ -3131,22 +3201,31 @@ export class ResolverServiceV2 {
       console.log('   🎉 Transaction confirmed successfully!');
       console.log('   ✅ User paid APT, resolver paid gas only!');
       
-      // 5. Emit success event
+      // Get escrow ID for fill status update
       const escrowIdBytes = signedOrder.orderMessage.escrow_id;
       const escrowId = '0x' + Buffer.from(escrowIdBytes).toString('hex');
       
-      this.socket.emit('escrow:source:created', {
-        orderId,
-        escrowId,
-        chain: 'APTOS',
-        txHash: pendingTx.hash,
-        amount: signedOrder.fromAmount,
-        secretHash: signedOrder.secretHash,
-        userFunded: true
-      });
-
-      // Find the corresponding order and fill
+      // Check if this is a partial fill order (frontend already emitted escrow:source:created)
+      // or a regular order (we need to emit it)
       const order = this.activeOrders.get(orderId);
+      const isPartialFillOrder = order?.partialFillEnabled || order?.partialFillAllowed;
+      
+      if (isPartialFillOrder) {
+        console.log('   📝 Partial fill order - frontend already notified backend of escrow creation');
+      } else {
+        console.log('   📤 Regular order - emitting escrow:source:created event');
+        this.socket.emit('escrow:source:created', {
+          orderId,
+          escrowId,
+          chain: 'APTOS',
+          txHash: pendingTx.hash,
+          amount: signedOrder.fromAmount,
+          secretHash: signedOrder.secretHash,
+          userFunded: true
+        });
+      }
+
+      // Find the corresponding fill
       let fill: Fill | undefined;
       for (const f of this.monitoringFills.values()) {
         if (f.orderId === orderId) {

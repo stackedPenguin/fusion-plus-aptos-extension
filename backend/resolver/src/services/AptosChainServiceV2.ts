@@ -301,6 +301,27 @@ export class AptosChainServiceV2 {
     }
   }
 
+  async checkAptosEscrowExists(escrowId: Uint8Array): Promise<boolean> {
+    try {
+      const escrowExists = await this.aptos.view({
+        payload: {
+          function: `${this.escrowAddress}::escrow_v3::escrow_exists`,
+          typeArguments: [],
+          functionArguments: [Array.from(escrowId)]
+        }
+      });
+      
+      // Handle both direct boolean and array responses
+      if (Array.isArray(escrowExists)) {
+        return escrowExists[0] === true;
+      }
+      return escrowExists === true;
+    } catch (error) {
+      console.log('Failed to check escrow existence:', error);
+      return false;
+    }
+  }
+
   async withdrawEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
     try {
       console.log('Withdrawing from Aptos escrow...');
@@ -319,8 +340,13 @@ export class AptosChainServiceV2 {
           }
         });
         console.log('  Escrow exists check:', escrowExists);
+        
+        if (!escrowExists || (Array.isArray(escrowExists) && !escrowExists[0])) {
+          throw new Error(`Escrow ${ethers.hexlify(escrowId)} does not exist on Aptos chain`);
+        }
       } catch (checkError) {
         console.log('  Failed to check escrow existence:', checkError);
+        throw checkError;
       }
       
       // Submit with retry on sequence number conflicts

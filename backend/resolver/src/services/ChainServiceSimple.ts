@@ -439,6 +439,10 @@ export class ChainServiceSimple {
     return this.aptos.createEscrowDelegated(escrowId, depositor, beneficiary, amount, hashlock, timelock, safetyDeposit);
   }
 
+  async checkAptosEscrowExists(escrowId: Uint8Array): Promise<boolean> {
+    return this.aptos.checkAptosEscrowExists(escrowId);
+  }
+
   async withdrawAptosEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
     return this.aptos.withdrawEscrow(escrowId, secret);
   }
