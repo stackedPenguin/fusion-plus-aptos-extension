@@ -1779,33 +1779,20 @@ export class ResolverServiceV2 {
           console.log('   🆔 Escrow ID:', sourceEscrowId);
           console.log('   📋 Order gaslessData:', JSON.stringify(order.gaslessData, null, 2));
           
-      // For partial fills, we need to calculate the correct escrow ID
+                // For gasless orders, use the escrow ID provided by the frontend
+          // For simple partial fills, each partial fill has its own unique escrow ID
           let actualEscrowId = sourceEscrowId;
           
-          // Debug partial fill detection
-          console.log('   🔍 Debugging partial fill detection:');
+          // Debug escrow ID usage
+          console.log('   🔍 Debugging escrow ID for gasless withdrawal:');
+          console.log(`   📦 Source Escrow ID (from frontend): ${sourceEscrowId}`);
           console.log(`   - order.partialFillAllowed: ${order.partialFillAllowed}`);
           console.log(`   - order.partialFillEnabled: ${order.partialFillEnabled}`);
-          console.log(`   - fill?.fillIndex: ${fill?.fillIndex}`);
           console.log(`   - fill object:`, fill);
           
-          if ((order.partialFillAllowed || order.partialFillEnabled) && fill?.fillIndex !== undefined) {
-            // This is a simple partial fill - calculate the real escrow ID
-            const baseOrderId = order.id;
-            const fillIndex = fill.fillIndex;
-            
-            // The actual escrow ID is keccak256(baseOrderId + fillIndex)
-            actualEscrowId = ethers.keccak256(
-              ethers.solidityPacked(['bytes32', 'uint256'], [ethers.id(baseOrderId), fillIndex])
-            );
-            
-            console.log('   🧩 Simple partial fill detected:');
-            console.log(`   📋 Base Order ID: ${baseOrderId}`);
-            console.log(`   📊 Fill Index: ${fillIndex}`);
-            console.log(`   🔄 Calculated Escrow ID for withdrawal: ${actualEscrowId}`);
-          } else {
-            console.log('   ❌ Partial fill NOT detected - using original escrow ID for withdrawal');
-          }
+          // For gasless orders, always use the escrow ID provided by the frontend
+          // This ID was used when creating the escrow and should be used for withdrawal
+          console.log('   ✅ Using escrow ID from gaslessData (no recalculation needed for gasless orders)')
           
           // Debug: Check where escrow was actually created
           console.log('   🔍 DEBUGGING ESCROW EXISTENCE:');
