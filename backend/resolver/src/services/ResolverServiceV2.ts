@@ -87,6 +87,16 @@ interface Order {
     metaTxR: string;
     metaTxS: string;
   };
+  // Dutch auction configuration
+  dutchAuction?: {
+    enabled: boolean;
+    startTimestamp: number;
+    duration: number;
+    startRate: number;
+    endRate: number;
+    decrementInterval: number;
+    decrementAmount: number;
+  };
 }
 
 interface Fill {
@@ -562,7 +572,7 @@ export class ResolverServiceV2 {
         console.log(`   🇳🇱 Dutch auction enabled for this order`);
         
         // Import Dutch auction utility
-        const { DutchAuctionPricing } = await import('../../order-engine/src/utils/dutchAuction');
+        const { DutchAuctionPricing } = await import('../utils/dutchAuction');
         
         const currentTime = Math.floor(Date.now() / 1000);
         const auctionStatus = DutchAuctionPricing.getAuctionStatus(order.dutchAuction, currentTime);
@@ -1168,9 +1178,9 @@ export class ResolverServiceV2 {
             // Execute gasless escrow creation
             await this.executeGaslessWETHEscrow(order, fill);
             return; // Gasless flow handles everything
-          } catch (error) {
+          } catch (error: any) {
             console.error(`   ❌ Failed to execute gasless WETH escrow:`, error);
-            throw new Error(`Gasless WETH escrow failed: ${error.message}`);
+            throw new Error(`Gasless WETH escrow failed: ${error.message || error}`);
           }
         }
         

@@ -12,9 +12,12 @@ stop_services() {
     echo "🛑 Stopping existing services..."
     
     # Kill processes by port
-    echo "   Stopping services on ports 3000, 3001, 3002..."
+    echo "   Stopping services on ports 3000, 3001, 3002, 4001, 4002, 4003..."
     lsof -ti:3001 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Order Engine (port 3001)"
     lsof -ti:3002 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver (port 3002)"
+    lsof -ti:4001 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 1 (port 4001)"
+    lsof -ti:4002 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 2 (port 4002)"
+    lsof -ti:4003 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 3 (port 4003)"
     lsof -ti:3000 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Frontend (port 3000)"
     
     # Also kill any node processes related to our services
@@ -24,7 +27,10 @@ stop_services() {
     
     # Clean up log files
     echo "   Cleaning up old logs..."
-    rm -f "$PROJECT_ROOT/order-engine.log" "$PROJECT_ROOT/resolver.log"
+    rm -f "$PROJECT_ROOT/order-engine.log" "$PROJECT_ROOT/resolver*.log"
+    
+    # Clean up resolver PID file
+    rm -f "$PROJECT_ROOT/.resolver-pids"
     
     echo "   ✅ All services stopped"
     echo ""
@@ -91,28 +97,58 @@ for i in {1..20}; do
     sleep 1
 done
 
-# Start Resolver
-echo ""
-echo "2. Starting Resolver Service (port 3002)..."
-cd "$PROJECT_ROOT/backend/resolver"
-npm run dev > "$PROJECT_ROOT/resolver.log" 2>&1 &
-RESOLVER_PID=$!
-echo "$RESOLVER_PID" >> "$PID_FILE"
-echo "   Resolver PID: $RESOLVER_PID"
+# Function to start a resolver
+start_resolver() {
+    local PORT=$1
+    local ENV_FILE=$2
+    local NAME=$3
+    local LOG_FILE="$PROJECT_ROOT/resolver-${PORT}.log"
+    
+    echo ""
+    echo "   Starting $NAME on port $PORT..."
+    
+    # Export environment variables
+    if [ -f "$PROJECT_ROOT/backend/resolver/$ENV_FILE" ]; then
+        export $(cat "$PROJECT_ROOT/backend/resolver/$ENV_FILE" | grep -v '^#' | xargs)
+    fi
+    export RESOLVER_PORT=$PORT
+    export RESOLVER_NAME=$NAME
+    
+    # Start resolver
+    cd "$PROJECT_ROOT/backend/resolver"
+    npm run dev > "$LOG_FILE" 2>&1 &
+    local PID=$!
+    echo "$PID" >> "$PID_FILE"
+    echo "   $NAME PID: $PID"
+    
+    # Wait for resolver to start
+    echo -n "   Waiting for $NAME to start"
+    for i in {1..20}; do
+        if check_port $PORT; then
+            echo ""
+            echo "   ✅ $NAME started successfully"
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+    done
+    echo ""
+    echo "   ❌ $NAME failed to start. Check $LOG_FILE"
+    return 1
+}
 
-# Wait and check if resolver started
-echo "   Waiting for Resolver to start..."
-for i in {1..20}; do
-    if check_port 3002; then
-        echo "   ✅ Resolver started successfully"
-        break
-    fi
-    if [ $i -eq 20 ]; then
-        echo "   ❌ Resolver failed to start. Check resolver.log"
-        exit 1
-    fi
-    sleep 1
-done
+# Start all resolvers
+echo ""
+echo "2. Starting Resolver Services..."
+
+# Start Resolver 1 (Main)
+start_resolver 4001 ".env" "Resolver-1" || exit 1
+
+# Start Resolver 2
+start_resolver 4002 ".env.resolver2" "Resolver-2" || exit 1
+
+# Start Resolver 3
+start_resolver 4003 ".env.resolver3" "Resolver-3" || exit 1
 
 # Start Frontend
 echo ""
@@ -139,11 +175,15 @@ echo ""
 echo "📊 Service URLs:"
 echo "   - Frontend: http://localhost:3000"
 echo "   - Order Engine: http://localhost:3001"
-echo "   - Resolver: http://localhost:3002"
+echo "   - Resolver 1: http://localhost:4001 (Aggressive)"
+echo "   - Resolver 2: http://localhost:4002 (Patient)"
+echo "   - Resolver 3: http://localhost:4003 (Opportunistic)"
 echo ""
 echo "📋 Logs:"
 echo "   - Order Engine: tail -f $PROJECT_ROOT/order-engine.log"
-echo "   - Resolver: tail -f $PROJECT_ROOT/resolver.log"
+echo "   - Resolver 1: tail -f $PROJECT_ROOT/resolver-4001.log"
+echo "   - Resolver 2: tail -f $PROJECT_ROOT/resolver-4002.log"
+echo "   - Resolver 3: tail -f $PROJECT_ROOT/resolver-4003.log"
 echo ""
 echo "🛑 To stop all services:"
 echo "   ./stop-all.sh"
@@ -152,9 +192,17 @@ echo "   ./scripts/start-all.sh stop"
 echo ""
 echo "💡 Test Flow:"
 echo "   1. Connect both MetaMask (Sepolia) and Petra (Testnet) wallets"
-echo "   2. Enter amount to swap (e.g., 0.001 ETH)"
-echo "   3. Click 'Create Swap Order'"
-echo "   4. Watch real-time updates as resolver processes your order"
+echo "   2. In the UI, expand the Resolver section"
+echo "   3. Toggle on/off individual resolvers to see different strategies"
+echo "   4. Enable 'Partial Fills' checkbox for order splitting"
+echo "   5. Enable 'Dutch Auction' for competitive pricing"
+echo "   6. Enter amount to swap (e.g., 0.0001 WETH)"
+echo "   7. Click 'Swap Now' and watch resolvers compete!"
+echo ""
+echo "🎯 Resolver Strategies:"
+echo "   - Resolver 1: Aggressive (fills early, larger amounts)"
+echo "   - Resolver 2: Patient (waits for better rates)"
+echo "   - Resolver 3: Opportunistic (fills throughout auction)"
 echo ""
 
 # Trap to handle Ctrl+C
