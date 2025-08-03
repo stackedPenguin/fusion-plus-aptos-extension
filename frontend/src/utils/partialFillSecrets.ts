@@ -19,10 +19,18 @@ export class PartialFillSecretsManager {
     const secretCount = parts + 1;
     const secrets: string[] = [];
     
-    for (let i = 0; i < secretCount; i++) {
-      // Generate random 32-byte secret
-      const randomBytes = ethers.randomBytes(32);
-      secrets.push(ethers.hexlify(randomBytes));
+    // Generate hierarchical secrets where each is derived from the previous
+    // This creates a chain: secret[i] = hash(secret[i-1] || nonce)
+    const rootSecret = ethers.randomBytes(32);
+    secrets.push(ethers.hexlify(rootSecret));
+    
+    for (let i = 1; i < secretCount; i++) {
+      // Each secret is derived from the previous one
+      const prevSecret = secrets[i - 1];
+      const nonce = ethers.randomBytes(16);
+      const combined = ethers.concat([prevSecret, nonce]);
+      const childSecret = ethers.keccak256(combined);
+      secrets.push(childSecret);
     }
     
     // Create fill thresholds (25%, 50%, 75%, 100% for 4 parts)
@@ -31,15 +39,57 @@ export class PartialFillSecretsManager {
       fillThresholds.push((i * 100) / parts);
     }
     
-    // Simple mock implementation for demo - in production use proper Merkle tree
-    const secretHashes = secrets.map(secret => ethers.keccak256(secret));
-    const merkleRoot = ethers.keccak256(ethers.concat(secretHashes));
+    // Build simple Merkle tree structure for frontend
+    // Create leaf nodes by hashing each secret
+    const leaves = secrets.map(secret => ethers.keccak256(secret));
     
-    // Mock proofs for demo
-    const merkleProofs: string[][] = secrets.map((_, i) => [
-      ethers.keccak256(ethers.toUtf8Bytes(`proof_${i}_0`)),
-      ethers.keccak256(ethers.toUtf8Bytes(`proof_${i}_1`))
-    ]);
+    // Build tree bottom-up
+    const tree: string[][] = [leaves];
+    let currentLevel = leaves;
+    
+    while (currentLevel.length > 1) {
+      const nextLevel: string[] = [];
+      for (let i = 0; i < currentLevel.length; i += 2) {
+        if (i + 1 < currentLevel.length) {
+          // Hash pair of nodes
+          const combined = ethers.concat([currentLevel[i], currentLevel[i + 1]]);
+          nextLevel.push(ethers.keccak256(combined));
+        } else {
+          // Odd node, promote to next level
+          nextLevel.push(currentLevel[i]);
+        }
+      }
+      tree.push(nextLevel);
+      currentLevel = nextLevel;
+    }
+    
+    const merkleRoot = tree[tree.length - 1][0];
+    
+    // Generate proofs for each secret
+    const merkleProofs: string[][] = [];
+    for (let i = 0; i < secrets.length; i++) {
+      const proof: string[] = [];
+      let index = i;
+      
+      // Build proof from bottom to top
+      for (let level = 0; level < tree.length - 1; level++) {
+        const levelNodes = tree[level];
+        const isRightNode = index % 2 === 1;
+        const siblingIndex = isRightNode ? index - 1 : index + 1;
+        
+        if (siblingIndex < levelNodes.length) {
+          proof.push(levelNodes[siblingIndex]);
+        }
+        
+        index = Math.floor(index / 2);
+      }
+      
+      merkleProofs.push(proof);
+    }
+    
+    console.log('🌳 Generated Merkle tree for partial fills:');
+    console.log(`   Root: ${merkleRoot}`);
+    console.log(`   Secrets: ${secretCount} (for ${parts} parts)`);
     
     return {
       merkleRoot,

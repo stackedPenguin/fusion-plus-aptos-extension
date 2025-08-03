@@ -1,96 +1,32 @@
-# Fusion+ Aptos Extension Demo Presentation Guide
-*4-minute demo presentation*
+# Fusion+ Aptos Extension Technical Implementation
+*4-minute technical demo presentation*
 
-## Opening Hook (30 seconds)
+## Technical Achievement Overview (30 seconds)
 
-**"What if I told you that cross-chain swaps could be completely gasless for users?"**
+**We've successfully implemented the first gasless, intent-based cross-chain swaps between Ethereum and Aptos**
 
-- Today we're showing the **first implementation** of 1inch Fusion+ protocol on Aptos
-- **True gasless swaps**: Users pay ZERO gas fees after one-time setup
-- **Full compliance** with 1inch Fusion+ whitepaper specifications
-
----
-
-## What We Built: Fusion+ Aptos Extension (1 minute)
-
-### Core Implementation
-✅ **Complete Fusion+ Protocol**: Atomic cross-chain swaps using hashlock/timelock escrows
-✅ **Bidirectional Support**: WETH ↔ APT swaps in both directions  
-✅ **Dutch Auction System**: Competitive resolver marketplace
-✅ **Intent-Based Architecture**: Users sign once, resolvers handle execution
-
-### Revolutionary Gasless Innovation
-✅ **Meta-Transaction Escrows**: EIP-712 signatures enable gasless WETH transfers
-✅ **Sponsored Aptos Transactions**: Resolver pays gas on both chains
-✅ **One-Time Setup**: Approve WETH once, swap gaslessly forever
-
-### Production Deployment
-✅ **Live on Testnets**: Sepolia (Ethereum) + Aptos Testnet
-✅ **Smart Contracts**: Regular + Gasless escrow contracts deployed
-✅ **Full UI/Backend**: Complete end-to-end user experience
+- **Complete Protocol Implementation**: Full atomic swap protocol with hashlock/timelock escrows
+- **Gasless Architecture**: Zero user gas fees through meta-transactions and sponsored transactions
+- **Production Deployment**: Live on Sepolia and Aptos testnets with real economic incentives
 
 ---
 
-## Alignment with Fusion+ Whitepaper (1 minute)
+## Technical Journey: From Vision to Reality (1 minute)
 
-### ✅ **Phases 1-4 Implementation**
-| **Whitepaper Phase** | **Our Implementation** |
-|---------------------|------------------------|
-| **Phase 1: Announcement** | User signs Fusion+ order with secret hash |
-| **Phase 2: Deposit** | Resolver creates escrows on both chains |
-| **Phase 3: Withdrawal** | Resolver reveals secret, completes atomic swap |
-| **Phase 4: Recovery** | Timelock-based fund recovery mechanisms |
+### Initial Challenges
+Our git history reveals the technical obstacles we overcame:
+- **EIP-712 Signature Validation**: Cross-chain address format compatibility issues
+- **Decimal Precision**: ETH (18 decimals) vs APT (8 decimals) conversion errors
+- **Wallet Integration**: Martian/Petra wallet incompatibilities with escrow IDs
+- **Transaction Sponsorship**: Implementing true gasless patterns on Aptos
 
-### ✅ **Key Protocol Features**
-- **Hashlock/Timelock Security**: Cryptographic guarantees for atomic swaps
-- **Safety Deposits**: Economic incentives for resolver completion
-- **Dutch Auctions**: Competitive pricing for optimal user rates
-- **Intent-Based UX**: Sign once, resolver handles everything
-- **Relayer Communication**: Secure secret reveal and cross-chain coordination
+### Key Breakthroughs
+- **Meta-Transaction Escrows**: Implemented EIP-712 permits for gasless WETH transfers
+- **Sponsored Transactions**: Achieved Shinami-pattern sponsorship for Aptos
+- **Partial Fills**: Merkle tree secret management for split orders
+- **Secret Management**: User-controlled secrets with automated relay coordination
 
-### 🚀 **Beyond Whitepaper: Gasless Innovation**
-- **Meta-Transactions**: Enable truly gasless user experience
-- **Aptos Integration**: First major L1 extension beyond Ethereum L2s
-- **Production Ready**: Full implementation with real economic incentives
-
----
-
-## Live Demo: Gasless WETH → APT Swap (1.5 minutes)
-
-### Demo Flow
-1. **Show Initial Balances**
-   - User: `0.003418 WETH`, `4.300791 APT`
-   - "Watch the user pay ZERO gas fees"
-
-2. **One-Time Setup** ⚡
-   - WETH approval to gasless escrow (pays gas once)
-   - "This is the ONLY time user pays gas"
-
-3. **Gasless Swap Execution** ✨
-   - User signs meta-transaction (EIP-712)
-   - **No gas payment required**
-   - Resolver creates destination escrow (locks APT)
-   - Resolver executes gasless source escrow
-   - Atomic completion with secret reveal
-
-4. **Results** 🎉
-   - User final: `0.003318 WETH`, `4.383502 APT` 
-   - **User gained:** `0.082711 APT` for `0.0001 WETH`
-   - **Gas fees paid by user:** `$0.00`
-   - **All gas costs covered by resolver**
-
-### Technical Highlights During Demo
-- **Atomic Security**: Funds locked with hashlock/timelock
-- **Cross-Chain Coordination**: Ethereum ↔ Aptos escrow synchronization  
-- **Relayer Service**: Manages secret reveals and cross-chain communication
-- **Economic Incentives**: Resolver earns fees while covering gas
-- **Real-Time Monitoring**: Live swap progress with asset flow tracking
-
----
-
-## Technical Architecture Overview (1 minute)
-
-### Smart Contract Innovation
+### Final Architecture
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  Ethereum       │     │   Fusion+       │     │     Aptos       │
@@ -100,87 +36,248 @@
           ▲                        ▲                        ▲
           │                        │                        │
      ┌────────────────────────────────────────────────────────────┐
-     │                    Resolver                                │
-     │           (Relayer + Gas Sponsor)                         │
-     │         • Secret Reveal Management                        │
-     │         • Cross-Chain Communication                       │
-     │         • Covers ALL Gas Costs                            │
+     │                    Resolver Service                        │
+     │         • Secret Reveal Coordination                       │
+     │         • Cross-Chain Communication                        │
+     │         • Complete Gas Sponsorship                         │
      └────────────────────────────────────────────────────────────┘
 ```
 
-### Key Components
-- **FusionPlusGaslessEscrow.sol**: Meta-transaction enabled escrow
-- **Aptos Escrow Module**: Native cross-chain escrow implementation
-- **Order Engine**: Dutch auction and intent processing
-- **Resolver Service**: Gas sponsorship and atomic execution
-- **Relayer System**: Secret reveal coordination and cross-chain messaging
+---
 
-### Economic Model
-- **Users**: Pay zero gas, get optimal rates via Dutch auction
-- **Resolvers**: Earn fees while providing gasless UX
-- **Protocol**: Generates value through resolver competition
+## Core Technical Implementation (1 minute)
+
+### Intent-Based Architecture
+- **User Signs Once**: Single EIP-712 signature initiates entire swap
+- **Resolver Automation**: Handles all on-chain execution and gas payments
+- **Atomic Guarantees**: Cryptographic enforcement through hashlock/timelock
+
+### Cross-Chain Protocol Phases
+1. **Announcement**: User creates intent with secret hash
+2. **Deposit**: Resolver creates escrows on both chains
+3. **Withdrawal**: Automated secret reveal enables atomic completion
+4. **Recovery**: Timelock-based fund recovery for edge cases
+
+### Gasless Innovation
+- **Ethereum**: Meta-transactions via EIP-712 permits
+- **Aptos**: Sponsored transactions with fee payer accounts
+- **One-Time Setup**: Single WETH approval enables permanent gasless swaps
+
+### Security & Economic Model
+- **Safety Deposits**: Incentivize resolver completion
+- **Dutch Auctions**: Competitive pricing through resolver marketplace
+- **Atomic Execution**: No trust required - pure cryptographic guarantees
 
 ---
 
-## Closing: Impact & Future (30 seconds)
+## Live Demo: Gasless WETH → APT Swap (1.5 minutes)
 
-### What This Means
-🌟 **First truly gasless cross-chain experience**
-🌟 **Aptos ecosystem expansion** beyond Ethereum L2s
-🌟 **Production-ready Fusion+** implementation with real economic value
+### Technical Flow Demonstration
 
-### Next Steps
-- **Mainnet deployment** with full security audits
-- **Additional chains** following Fusion+ specifications  
-- **Advanced features**: Partial fills, complex order types
+1. **Initial State**
+   - User: `0.003418 WETH`, `4.300791 APT`
+   - Show zero ETH balance for gas
 
-**"This is how cross-chain DeFi should work - seamless, gasless, and atomic."**
+2. **Intent Creation** 
+   - User signs Fusion+ order with secret hash
+   - No blockchain transaction - just cryptographic signature
+   - Dutch auction begins for resolvers
 
----
+3. **Resolver Execution**
+   - Creates destination escrow on Aptos (locks APT)
+   - Executes gasless source escrow on Ethereum
+   - WebSocket coordination for cross-chain state
 
-## Our Relayer Implementation
+4. **Atomic Completion**
+   - Secret reveal triggers automatic withdrawals
+   - User receives `0.082711 APT` for `0.0001 WETH`
+   - **Total gas paid by user: $0.00**
 
-### ✅ **Complete Relayer Service**
-Our implementation includes a **full relayer system** that manages:
-
-1. **Secret Management**: 
-   - User generates secret, computes hash
-   - Relayer waits for both escrows to be created and finalized
-   - Coordinates secure secret reveal between chains
-
-2. **Cross-Chain Communication**:
-   - WebSocket-based real-time communication
-   - LayerZero integration for cross-chain messaging
-   - Automatic escrow synchronization verification
-
-3. **Protocol Compliance**:
-   - Follows 1inch Fusion+ whitepaper Phase 1-4 exactly
-   - Relayer ensures both escrows exist before secret reveal
-   - Handles timelock and safety deposit mechanics
-
-4. **Gas Sponsorship**:
-   - Resolver pays all gas costs on both chains
-   - Users never touch gas tokens after initial WETH approval
-   - Economic incentives via fees and safety deposits
+### Key Technical Points
+- Hashlock ensures atomicity across chains
+- Timelock provides recovery mechanism
+- Resolver bears all execution costs
+- User experience is completely gasless
 
 ---
 
-## Demo Backup Talking Points
+## Technical Achievements & Innovation (1 minute)
 
-### If Technical Issues
-- **Show relayer logs** demonstrating secret reveal coordination
-- **Show architecture diagrams** and explain protocol benefits
-- **Reference deployed contracts** and transaction hashes
-- **Highlight code implementation** aligning with whitepaper
+### Protocol Implementation
+✅ **Complete Fusion+ Phases**: All four phases from intent-based protocol
+✅ **Hashlock/Timelock Escrows**: Cryptographic atomic swap guarantees
+✅ **Dutch Auction Engine**: Competitive resolver marketplace
+✅ **Partial Fill Support**: Merkle tree secrets for order splitting
 
-### Key Statistics to Mention
-- **Contract Addresses**: Sepolia `0x4868C055E894f6C774960a175aD11Dec26f8475f`
-- **Gas Savings**: 100% user gas cost elimination
-- **Transaction Speed**: ~30 second atomic cross-chain completion
-- **Code Volume**: 1,750+ lines implementing complete Fusion+ spec
+### Gasless Architecture
+✅ **Meta-Transaction Pattern**: EIP-712 permits on Ethereum
+✅ **Sponsored Transactions**: Fee payer pattern on Aptos
+✅ **Zero User Gas**: Complete abstraction of gas costs
 
-### Unique Value Props
-1. **First gasless cross-chain** implementation
-2. **Complete Fusion+ compliance** with whitepaper specifications
-3. **Production deployment** with real economic incentives
-4. **Aptos ecosystem expansion** beyond typical L2 integrations
+### Production Readiness
+✅ **Smart Contracts Deployed**: Both chains with verified contracts
+✅ **Resolver Infrastructure**: WebSocket relay and secret management
+✅ **Economic Incentives**: Real value flow with safety deposits
+
+### Technical Challenges Solved
+- Cross-chain signature compatibility
+- Decimal precision conversions
+- Wallet integration complexities
+- Transaction sponsorship patterns
+
+---
+
+## Impact & Technical Roadmap (30 seconds)
+
+### Current Achievement
+🌟 **First gasless cross-chain implementation** with full atomic guarantees
+🌟 **Production-ready infrastructure** with real economic incentives
+🌟 **Extensible architecture** for additional chains and assets
+
+### Technical Next Steps
+- **Security Audits**: Smart contract verification for mainnet
+- **Performance Optimization**: Sub-20 second swap completion
+- **Additional Integrations**: More chains following same patterns
+
+**We've proven that truly gasless, atomic cross-chain swaps are not just possible - they're here.**
+
+---
+
+## Relayer Implementation & Protocol Flows (Deep Dive)
+
+### Our Relayer Service Architecture
+
+The relayer is the critical coordinator in our Fusion+ implementation, handling:
+
+1. **WebSocket Communication Hub**
+   - Real-time event relay between frontend, order engine, and resolver
+   - Events: `order:new`, `escrow:created`, `secret:reveal`, `swap:completed`
+   - Bidirectional communication for state synchronization
+
+2. **Secret Management Protocol**
+   - Stores user-generated secrets until both escrows are confirmed
+   - Validates escrow creation on both chains before revealing secrets
+   - Implements finality locks to prevent chain reorganization attacks
+   - Handles partial fill secrets with Merkle tree verification
+
+3. **Cross-Chain Coordination**
+   - Monitors Ethereum and Aptos for escrow events
+   - Verifies matching hashlocks across chains
+   - Ensures atomic execution through cryptographic proofs
+
+### Detailed Secret Flow
+
+#### Understanding H and S:
+- **S (Secret)**: A random 32-byte value generated by the user (e.g., `0x4f3c...`)
+- **H (Hash)**: The cryptographic hash of S using Keccak256 (e.g., `H = Keccak256(S)`)
+- **Why Separate?**: This is the core of **Hashed Timelock Contracts (HTLCs)**:
+  - H is public and included in escrows on both chains
+  - S is private, known only to the user until reveal time
+  - Funds can only be unlocked by providing S that hashes to H
+  - This creates an atomic lock - either both chains unlock or neither
+
+#### What is "Check Finality"?
+- **Finality** = Blocks are confirmed and cannot be reversed
+- Each blockchain has different finality times:
+  - Ethereum: ~15 minutes (64 blocks)
+  - Aptos: ~4 seconds (instant finality)
+- **Why Check?**: Prevents attacks where escrow creation is reversed
+- We wait for finality before revealing S to ensure escrows are permanent
+
+```
+User (Maker)                    Relayer                    Resolver
+     │                             │                           │
+     ├─1. Generate Secret S────────┤                           │
+     │   (32 random bytes)         │                           │
+     ├─2. Compute Hash H──────────►│                           │
+     │   H = Keccak256(S)          │                           │
+     │   Sign Intent               │                           │
+     │                             ├─3. Broadcast Order────────►│
+     │                             │    (with H, no S)         │
+     │                             │                           │
+     │                             │◄─4. Create Escrows────────┤
+     │                             │    (locks funds with H)   │
+     │                             │                           │
+     │                             ├─5. Verify Escrows─────────┤
+     │                             │    Wait for finality      │
+     │                             │    (blocks confirmed)     │
+     │                             │                           │
+     │◄─6. Request Secret──────────┤                           │
+     │    (only after finality)    │                           │
+     │                             │                           │
+     ├─7. Reveal S─────────────────►├─8. Share S──────────────►│
+     │                             │                           │
+     │                             │                           ├─9. Unlock Both
+     │                             │                           │    Escrows with S
+     └─────────────────────────────┴───────────────────────────┘
+```
+
+**How H/S Separation Ensures Security:**
+
+1. **Pre-commitment**: By sharing H first, user commits to a specific S without revealing it
+2. **No Front-running**: Resolver can't steal funds because they don't know S
+3. **Atomic Guarantee**: Both escrows require the same S, ensuring all-or-nothing execution
+4. **Time Protection**: If S is never revealed, timelocks allow fund recovery
+5. **One-way Function**: Given H, it's computationally impossible to derive S
+
+**Example Attack Prevention:**
+- Without H/S separation: Resolver sees user's unlock transaction, copies it, steals funds
+- With H/S separation: Resolver can create escrows with H but can't unlock without S
+- User only reveals S after verifying both escrows exist and are final
+
+### Detailed Fund Flow
+
+#### WETH → APT Gasless Flow:
+
+```
+Initial State:
+User: 0.003418 WETH, 4.300791 APT, 0 ETH
+Resolver: X WETH, Y APT, Has ETH/APT for gas
+
+Step 1: Intent Creation (Off-chain)
+├─ User signs EIP-712 meta-transaction
+├─ Includes: WETH amount, secret hash H, receiver address
+└─ No gas required - pure signature
+
+Step 2: Resolver Creates Destination Escrow
+├─ Resolver locks 0.082711 APT on Aptos
+├─ Escrow references hash H and user as beneficiary
+└─ Resolver pays Aptos gas fees
+
+Step 3: Resolver Executes Gasless Source Escrow
+├─ Uses user's meta-transaction signature
+├─ Transfers 0.0001 WETH from user to escrow
+├─ Escrow locks WETH with hash H
+└─ Resolver pays Ethereum gas fees
+
+Step 4: Secret Reveal & Atomic Completion
+├─ User reveals secret S to relayer
+├─ Resolver uses S to unlock WETH escrow (gets WETH)
+├─ Resolver uses S to unlock APT escrow (user gets APT)
+└─ Both unlocks are atomic - either both succeed or neither
+
+Final State:
+User: 0.003318 WETH, 4.383502 APT, still 0 ETH
+Resolver: +0.0001 WETH, -0.082711 APT, paid all gas
+```
+
+**Economic Model:**
+- User pays zero gas on both chains
+- Resolver earns spread between WETH/APT rates
+- Safety deposits incentivize resolver to complete swaps
+- Dutch auction ensures competitive pricing
+
+---
+
+## Technical Deep Dive (Backup)
+
+### Contract Architecture
+- **FusionPlusGaslessEscrow.sol**: Meta-transaction escrow implementation
+- **escrow_v2.move**: Aptos native escrow with sponsorship
+- **Resolver Service**: Node.js with ethers/aptos-sdk integration
+
+### Key Innovations
+1. **Cross-Chain Secret Relay**: WebSocket-based coordination
+2. **Gasless Patterns**: EIP-712 + Aptos sponsorship
+3. **Atomic Guarantees**: Cryptographic enforcement
+4. **Economic Model**: Resolver incentives via fees and deposits

@@ -11,6 +11,8 @@ export interface PartialFillSecrets {
 export class PartialFillSecretsManager {
   /**
    * Generate secrets and Merkle tree for partial fills
+   * Following 1inch Fusion+ pattern: N+1 secrets for N parts where each secret
+   * is the parent of the next in the Merkle tree
    * @param parts Number of parts to split order (default: 4 for 25% each)
    * @returns PartialFillSecrets object with tree data
    */
@@ -19,10 +21,18 @@ export class PartialFillSecretsManager {
     const secretCount = parts + 1;
     const secrets: string[] = [];
     
-    for (let i = 0; i < secretCount; i++) {
-      // Generate random 32-byte secret
-      const randomBytes = ethers.randomBytes(32);
-      secrets.push(ethers.hexlify(randomBytes));
+    // Generate hierarchical secrets where each is derived from the previous
+    // This creates a chain: secret[i] = hash(secret[i-1] || nonce)
+    const rootSecret = ethers.randomBytes(32);
+    secrets.push(ethers.hexlify(rootSecret));
+    
+    for (let i = 1; i < secretCount; i++) {
+      // Each secret is derived from the previous one
+      const prevSecret = secrets[i - 1];
+      const nonce = ethers.randomBytes(16);
+      const combined = ethers.concat([prevSecret, nonce]);
+      const childSecret = ethers.keccak256(combined);
+      secrets.push(childSecret);
     }
     
     // Create fill thresholds (25%, 50%, 75%, 100% for 4 parts)
@@ -32,9 +42,12 @@ export class PartialFillSecretsManager {
     }
     
     // Create Merkle tree from secret hashes
+    // In the hierarchical structure, we hash each secret to create leaves
     const secretHashes = secrets.map(secret => ethers.keccak256(secret));
+    
+    // Build a balanced Merkle tree with proper parent-child relationships
     const merkleTree = new MerkleTree(secretHashes, ethers.keccak256, {
-      sortPairs: true,
+      sortPairs: false, // Preserve order for hierarchical structure
       hashLeaves: false // Already hashed
     });
     
@@ -44,6 +57,11 @@ export class PartialFillSecretsManager {
       const proof = merkleTree.getHexProof(secretHashes[i]);
       merkleProofs.push(proof);
     }
+    
+    console.log('🌳 Generated Merkle tree for partial fills:');
+    console.log(`   Root: ${merkleTree.getHexRoot()}`);
+    console.log(`   Secrets: ${secretCount} (for ${parts} parts)`);
+    console.log(`   Tree depth: ${merkleTree.getDepth()}`);
     
     return {
       merkleRoot: merkleTree.getHexRoot(),

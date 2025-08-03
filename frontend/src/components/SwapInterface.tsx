@@ -19,6 +19,7 @@ import {
 import { ApprovalBanner } from './ApprovalBanner';
 import { SponsoredTransactionV3 } from '../utils/sponsoredTransactionV3';
 import { GaslessWETHTransaction } from '../utils/gaslessWETHTransaction';
+import ResolverStatus from './ResolverStatus';
 import './SwapInterface.css';
 
 // Helper function to convert Uint8Array to hex string
@@ -72,6 +73,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [partialFillAllowed, setPartialFillAllowed] = useState<boolean>(false);
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [partialFills, setPartialFills] = useState<any[]>([]);
+  const [dutchAuctionEnabled, setDutchAuctionEnabled] = useState<boolean>(false);
+  const [activeResolvers, setActiveResolvers] = useState<string[]>([]);
 
   // Get current balances
   const currentBalances = {
@@ -219,6 +222,18 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         ...(partialFillAllowed && partialFillSecrets && {
           partialFillSecrets,
           maxParts: 4
+        }),
+        // Add Dutch auction if enabled and partial fills are allowed
+        ...(partialFillAllowed && dutchAuctionEnabled && {
+          dutchAuction: {
+            enabled: true,
+            startTimestamp: Math.floor(Date.now() / 1000),
+            duration: 300, // 5 minutes
+            startRate: exchangeRate! * 1.02, // Start 2% above market
+            endRate: exchangeRate! * 0.98, // End 2% below market  
+            decrementInterval: 60, // Drop every minute
+            decrementAmount: (exchangeRate! * 0.04) / 5 // Total 4% drop over 5 intervals
+          }
         })
       };
 
@@ -945,9 +960,26 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
     }
   };
 
+  const handleResolverToggle = (resolverId: string, enabled: boolean) => {
+    setActiveResolvers(prev => {
+      if (enabled) {
+        return [...prev, resolverId];
+      } else {
+        return prev.filter(id => id !== resolverId);
+      }
+    });
+  };
+
   return (
     <div className="swap-interface">
       <h2>True Gasless Swap (Fusion+ V2)</h2>
+      
+      {/* Resolver Status */}
+      <ResolverStatus 
+        onResolverToggle={handleResolverToggle}
+        onDutchAuctionToggle={setDutchAuctionEnabled}
+        dutchAuctionEnabled={dutchAuctionEnabled}
+      />
       
       {/* Show approval banner for WETH */}
       {fromChain === Chain.ETHEREUM && ethAccount && ethSigner && (

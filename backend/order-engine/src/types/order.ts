@@ -45,6 +45,17 @@ export const PartialFillSecretsSchema = z.object({
   fillThresholds: z.array(z.number())
 });
 
+// Dutch auction configuration schema
+export const DutchAuctionSchema = z.object({
+  enabled: z.boolean().default(false),
+  startTimestamp: z.number(), // When auction starts
+  duration: z.number(), // Total auction duration in seconds
+  startRate: z.number(), // Initial exchange rate (best for user)
+  endRate: z.number(), // Final exchange rate (worst for user)
+  decrementInterval: z.number().default(60), // Price drop interval in seconds
+  decrementAmount: z.number(), // How much rate drops per interval
+});
+
 export const CreateOrderSchema = z.object({
   fromChain: z.nativeEnum(Chain),
   toChain: z.nativeEnum(Chain),
@@ -62,6 +73,8 @@ export const CreateOrderSchema = z.object({
   secretHashes: z.array(z.string()).optional(), // For partial fills using Merkle tree
   partialFillSecrets: PartialFillSecretsSchema.optional(), // Merkle tree secrets for partial fills
   maxParts: z.number().default(4).optional(), // Max parts to split order (default: 4 for 25% each)
+  // Dutch auction configuration
+  dutchAuction: DutchAuctionSchema.optional(),
   // Optional permit for automatic transfers
   permit: PermitSchema.optional(),
   permitSignature: z.string().optional(),
@@ -73,6 +86,7 @@ export const CreateOrderSchema = z.object({
 export type CreateOrderDto = z.infer<typeof CreateOrderSchema>;
 export type GaslessData = z.infer<typeof GaslessDataSchema>;
 export type PartialFillSecrets = z.infer<typeof PartialFillSecretsSchema>;
+export type DutchAuction = z.infer<typeof DutchAuctionSchema>;
 
 export interface Order extends CreateOrderDto {
   id: string;

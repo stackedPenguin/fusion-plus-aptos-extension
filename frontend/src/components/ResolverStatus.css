@@ -1,0 +1,245 @@
+.resolver-status {
+  background: rgba(26, 26, 31, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.resolver-header {
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.resolver-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.resolver-icon {
+  font-size: 20px;
+}
+
+.resolver-count {
+  background: rgba(29, 200, 114, 0.2);
+  color: var(--accent-primary);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.expand-icon {
+  transition: transform 0.3s ease;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.dutch-auction-toggle {
+  display: flex;
+  align-items: center;
+}
+
+.dutch-auction-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dutch-auction-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.resolver-details {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.resolver-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.resolver-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: rgba(13, 13, 15, 0.6);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.3s ease;
+}
+
+.resolver-item.enabled {
+  border-color: rgba(29, 200, 114, 0.3);
+  background: rgba(29, 200, 114, 0.05);
+}
+
+.resolver-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.resolver-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.strategy-icon {
+  font-size: 16px;
+}
+
+.resolver-address {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+
+.resolver-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.resolver-strategy {
+  background: rgba(63, 140, 255, 0.1);
+  color: var(--blue);
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: capitalize;
+}
+
+.resolver-fills {
+  color: var(--text-secondary);
+}
+
+.resolver-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s ease;
+}
+
+.resolver-toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+}
+
+.resolver-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  transition: 0.3s;
+  border-radius: 20px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.resolver-toggle input:checked + .toggle-slider {
+  background-color: var(--accent-primary);
+}
+
+.resolver-toggle input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+  background-color: white;
+}
+
+.dutch-auction-info {
+  margin-top: 16px;
+  padding: 16px;
+  background: rgba(63, 140, 255, 0.05);
+  border: 1px solid rgba(63, 140, 255, 0.2);
+  border-radius: 12px;
+}
+
+.dutch-auction-info h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: var(--blue);
+}
+
+.dutch-auction-info p {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.dutch-auction-info ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.dutch-auction-info li {
+  margin: 4px 0;
+}
+
+.dutch-auction-info strong {
+  color: var(--text-primary);
+}

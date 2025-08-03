@@ -116,6 +116,8 @@ export class ResolverServiceV2 {
   private ethereumProvider: ethers.Provider;
   private aptosProvider: any; // Aptos client
   private balanceTracker: BalanceTracker;
+  private resolverName: string;
+  private resolverPort: number;
   
   // Track active orders
   private activeOrders: Map<string, Order> = new Map();
@@ -134,6 +136,12 @@ export class ResolverServiceV2 {
     sourceEscrowId: string;
     destinationEscrowId: string;
   }> = new Map();
+  // Track Dutch auction participation
+  private dutchAuctionParticipation: Map<string, {
+    lastBid: number;
+    fillPercentage: number;
+    score: number;
+  }> = new Map();
 
   constructor() {
     this.orderEngineUrl = process.env.ORDER_ENGINE_URL || 'http://localhost:3001';
@@ -141,6 +149,8 @@ export class ResolverServiceV2 {
     this.priceService = new PriceService();
     this.ethereumAddress = process.env.ETHEREUM_RESOLVER_ADDRESS!;
     this.aptosAddress = process.env.APTOS_RESOLVER_ADDRESS!;
+    this.resolverName = process.env.RESOLVER_NAME || 'Resolver-1';
+    this.resolverPort = parseInt(process.env.RESOLVER_PORT || '4001');
     
     // Initialize providers for monitoring
     this.ethereumProvider = new ethers.JsonRpcProvider(
@@ -165,8 +175,8 @@ export class ResolverServiceV2 {
 
   private setupSocketListeners() {
     this.socket.on('connect', () => {
-      console.log('Connected to order engine');
-      console.log('Listening for events: order:new, escrow:source:created, order:signed, order:signed:sponsored:v2, order:signed:sponsored:v3, order:signed:with:permit');
+      console.log(`[${this.resolverName}] Connected to order engine`);
+      console.log(`[${this.resolverName}] Listening for events: order:new, escrow:source:created, order:signed, order:signed:sponsored:v2, order:signed:sponsored:v3, order:signed:with:permit`);
       this.socket.emit('subscribe:active');
     });
 
@@ -535,25 +545,75 @@ export class ResolverServiceV2 {
   }
 
   private async calculateOptimalFillPercentage(order: Order): Promise<number> {
-    // Demo strategy: Always fill only 25% to demonstrate partial fills
-    // This allows multiple resolvers (or same resolver multiple times) to fill portions
+    // Strategy: Use Dutch auction parameters to determine fill percentage
+    // Early resolvers get better rates but must commit to larger fills
     
     try {
       // Check our balance on destination chain
       const balance = await this.getDestinationBalance(order);
       const requiredAmount = BigInt(order.minToAmount);
       
-      // For demo purposes, let's always fill 25% if we can afford it
+      // Get current fill status
+      const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
+      console.log(`   📊 Order currently ${currentFillPercentage}% filled`);
+      
+      // If Dutch auction is enabled, calculate based on auction parameters
+      if (order.dutchAuction?.enabled) {
+        console.log(`   🇳🇱 Dutch auction enabled for this order`);
+        
+        // Import Dutch auction utility
+        const { DutchAuctionPricing } = await import('../../order-engine/src/utils/dutchAuction');
+        
+        const currentTime = Math.floor(Date.now() / 1000);
+        const auctionStatus = DutchAuctionPricing.getAuctionStatus(order.dutchAuction, currentTime);
+        
+        console.log(`   ⏰ Auction status:`, {
+          isActive: auctionStatus.isActive,
+          currentRate: auctionStatus.currentRate,
+          percentComplete: auctionStatus.percentComplete.toFixed(1),
+          nextRateDropIn: auctionStatus.nextRateDropIn
+        });
+        
+        // Strategy based on resolver identity
+        const resolverStrategy = this.getResolverStrategy();
+        let targetFillPercentage = 25; // Default
+        
+        if (resolverStrategy === 'aggressive') {
+          // Resolver 1: Aggressive - tries to fill early for better rates
+          if (auctionStatus.percentComplete < 25) {
+            targetFillPercentage = 50; // Fill half early
+          } else {
+            targetFillPercentage = 25;
+          }
+        } else if (resolverStrategy === 'patient') {
+          // Resolver 2: Patient - waits for better rates
+          if (auctionStatus.percentComplete > 50) {
+            targetFillPercentage = 25;
+          } else {
+            return 0; // Wait for better rate
+          }
+        } else {
+          // Resolver 3: Opportunistic - fills small amounts throughout
+          targetFillPercentage = 25;
+        }
+        
+        // Check if we can afford the target amount
+        const targetAmount = (requiredAmount * BigInt(targetFillPercentage)) / 100n;
+        if (balance < targetAmount) {
+          console.log(`   ❌ Cannot afford ${targetFillPercentage}% of the order`);
+          return 0;
+        }
+        
+        return targetFillPercentage;
+      }
+      
+      // Non-Dutch auction: always fill 25% for demo
       const quarterAmount = requiredAmount / 4n;
       
       if (balance < quarterAmount) {
         console.log(`   ❌ Cannot afford even 25% of the order`);
         return 0;
       }
-      
-      // Get current fill status
-      const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
-      console.log(`   📊 Order currently ${currentFillPercentage}% filled`);
       
       // Demo: Only fill once (25%) to demonstrate partial fills
       if (currentFillPercentage > 0) {
@@ -2456,8 +2516,20 @@ export class ResolverServiceV2 {
     }
   }
 
+  private getResolverStrategy(): 'aggressive' | 'patient' | 'opportunistic' {
+    // Determine strategy based on resolver name/port
+    if (this.resolverName === 'Resolver-1' || this.resolverPort === 4001) {
+      return 'aggressive';
+    } else if (this.resolverName === 'Resolver-2' || this.resolverPort === 4002) {
+      return 'patient';
+    } else {
+      return 'opportunistic';
+    }
+  }
+
   start() {
-    console.log('Resolver service V2 started');
+    console.log(`[${this.resolverName}] Resolver service V2 started`);
+    console.log(`[${this.resolverName}] Strategy: ${this.getResolverStrategy()}`);
     console.log('Implementing proper Fusion+ flow:');
     console.log('  1. Resolver creates destination escrow only');
     console.log('  2. User creates source escrow');
