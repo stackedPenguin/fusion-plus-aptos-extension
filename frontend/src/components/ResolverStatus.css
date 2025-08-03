@@ -1,10 +1,10 @@
 .resolver-status {
-  background: rgba(26, 26, 31, 0.85);
+  background: rgba(35, 35, 41, 0.85);
   backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  border-radius: 12px;
   overflow: hidden;
-  margin-bottom: 16px;
+  width: 100%;
 }
 
 .resolver-header {
@@ -12,15 +12,13 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  cursor: pointer;
-  user-select: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .resolver-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  cursor: pointer;
   flex: 1;
 }
 
@@ -68,20 +66,8 @@
 }
 
 .resolver-details {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding: 16px;
-  animation: slideDown 0.3s ease;
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  flex-direction: column;
 }
 
 .resolver-list {
@@ -163,51 +149,7 @@
   transition: background-color 0.3s ease;
 }
 
-.resolver-toggle {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 20px;
-}
-
-.resolver-toggle input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(255, 255, 255, 0.1);
-  transition: 0.3s;
-  border-radius: 20px;
-}
-
-.toggle-slider:before {
-  position: absolute;
-  content: "";
-  height: 14px;
-  width: 14px;
-  left: 3px;
-  bottom: 3px;
-  background-color: var(--text-secondary);
-  transition: 0.3s;
-  border-radius: 50%;
-}
-
-.resolver-toggle input:checked + .toggle-slider {
-  background-color: var(--accent-primary);
-}
-
-.resolver-toggle input:checked + .toggle-slider:before {
-  transform: translateX(20px);
-  background-color: white;
-}
+/* Remove duplicate toggle styles - now using .toggle-switch */
 
 .dutch-auction-info {
   margin-top: 16px;
@@ -241,5 +183,150 @@
 }
 
 .dutch-auction-info strong {
+  color: var(--text-primary);
+}
+.resolver-warning {
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.3);
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  color: #ff9800;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.toggle-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.toggle-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.toggle-label {
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.resolver-info-message {
+  background: rgba(63, 140, 255, 0.1);
+  border: 1px solid rgba(63, 140, 255, 0.3);
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  color: #3f8cff;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--accent-primary);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+  background-color: white;
+}
+
+.balance-info {
+  position: relative;
+  cursor: help;
+  font-size: 14px;
+  color: var(--blue);
+  margin: 0 8px;
+}
+
+.balance-tooltip {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  background: rgba(13, 13, 15, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 180px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 1000;
+  margin-bottom: 8px;
+}
+
+.balance-info:hover .balance-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.balance-tooltip strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.balance-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.balance-row span:last-child {
+  font-family: monospace;
   color: var(--text-primary);
 }

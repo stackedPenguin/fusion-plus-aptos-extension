@@ -12,12 +12,12 @@ stop_services() {
     echo "🛑 Stopping existing services..."
     
     # Kill processes by port
-    echo "   Stopping services on ports 3000, 3001, 3002, 4001, 4002, 4003..."
+    echo "   Stopping services on ports 3000, 3001, 3002, 8081, 8082, 8083..."
     lsof -ti:3001 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Order Engine (port 3001)"
     lsof -ti:3002 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver (port 3002)"
-    lsof -ti:4001 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 1 (port 4001)"
-    lsof -ti:4002 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 2 (port 4002)"
-    lsof -ti:4003 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 3 (port 4003)"
+    lsof -ti:8081 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 1 (port 8081)"
+    lsof -ti:8082 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 2 (port 8082)"
+    lsof -ti:8083 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Resolver 3 (port 8083)"
     lsof -ti:3000 | xargs kill -9 2>/dev/null && echo "   ✓ Stopped Frontend (port 3000)"
     
     # Also kill any node processes related to our services
@@ -142,13 +142,13 @@ echo ""
 echo "2. Starting Resolver Services..."
 
 # Start Resolver 1 (Main)
-start_resolver 4001 ".env" "Resolver-1" || exit 1
+start_resolver 8081 ".env" "Resolver-1" || exit 1
 
 # Start Resolver 2
-start_resolver 4002 ".env.resolver2" "Resolver-2" || exit 1
+start_resolver 8082 ".env.resolver2" "Resolver-2" || exit 1
 
 # Start Resolver 3
-start_resolver 4003 ".env.resolver3" "Resolver-3" || exit 1
+start_resolver 8083 ".env.resolver3" "Resolver-3" || exit 1
 
 # Start Frontend
 echo ""
@@ -175,15 +175,15 @@ echo ""
 echo "📊 Service URLs:"
 echo "   - Frontend: http://localhost:3000"
 echo "   - Order Engine: http://localhost:3001"
-echo "   - Resolver 1: http://localhost:4001 (Aggressive)"
-echo "   - Resolver 2: http://localhost:4002 (Patient)"
-echo "   - Resolver 3: http://localhost:4003 (Opportunistic)"
+echo "   - Resolver 1: http://localhost:8081 (Aggressive)"
+echo "   - Resolver 2: http://localhost:8082 (Patient)"
+echo "   - Resolver 3: http://localhost:8083 (Opportunistic)"
 echo ""
 echo "📋 Logs:"
 echo "   - Order Engine: tail -f $PROJECT_ROOT/order-engine.log"
-echo "   - Resolver 1: tail -f $PROJECT_ROOT/resolver-4001.log"
-echo "   - Resolver 2: tail -f $PROJECT_ROOT/resolver-4002.log"
-echo "   - Resolver 3: tail -f $PROJECT_ROOT/resolver-4003.log"
+echo "   - Resolver 1: tail -f $PROJECT_ROOT/resolver-8081.log"
+echo "   - Resolver 2: tail -f $PROJECT_ROOT/resolver-8082.log"
+echo "   - Resolver 3: tail -f $PROJECT_ROOT/resolver-8083.log"
 echo ""
 echo "🛑 To stop all services:"
 echo "   ./stop-all.sh"
@@ -199,10 +199,15 @@ echo "   5. Enable 'Dutch Auction' for competitive pricing"
 echo "   6. Enter amount to swap (e.g., 0.0001 WETH)"
 echo "   7. Click 'Swap Now' and watch resolvers compete!"
 echo ""
-echo "🎯 Resolver Strategies:"
-echo "   - Resolver 1: Aggressive (fills early, larger amounts)"
-echo "   - Resolver 2: Patient (waits for better rates)"
-echo "   - Resolver 3: Opportunistic (fills throughout auction)"
+echo "🎯 Resolver Strategies (Demo Mode - 2 min auction):"
+echo "   - Resolver 1: Aggressive (fills 50% early for guaranteed execution)"
+echo "   - Resolver 2: Patient (waits until 60% complete, then fills 50%)"
+echo "   - Resolver 3: Opportunistic (25-50% fills, reacts to rate drops)"
+echo ""
+echo "⚡ Dutch Auction Timing:"
+echo "   - Duration: 2 minutes (fast demo mode)"
+echo "   - Rate drops: Every 15 seconds"
+echo "   - Start: 3% above market → End: 3% below market"
 echo ""
 
 # Trap to handle Ctrl+C

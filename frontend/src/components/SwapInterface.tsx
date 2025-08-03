@@ -18,8 +18,10 @@ import {
 } from '@aptos-labs/ts-sdk';
 import { ApprovalBanner } from './ApprovalBanner';
 import { SponsoredTransactionV3 } from '../utils/sponsoredTransactionV3';
+import { getAptBalance } from '../utils/aptosClient';
 import { GaslessWETHTransaction } from '../utils/gaslessWETHTransaction';
-import ResolverStatus from './ResolverStatus';
+import { PartialFillSecretsManager } from '../utils/partialFillSecrets';
+import DutchAuctionProgress from './DutchAuctionProgress';
 import './SwapInterface.css';
 
 // Helper function to convert Uint8Array to hex string
@@ -36,6 +38,9 @@ interface SwapInterfaceProps {
   orderService: OrderService;
   ethBalance: string;
   aptosBalance: string;
+  dutchAuctionEnabled?: boolean;
+  activeResolvers?: string[];
+  partialFillEnabled?: boolean;
 }
 
 const TOKEN_ICONS = {
@@ -56,7 +61,10 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   ethSigner,
   orderService,
   ethBalance,
-  aptosBalance
+  aptosBalance,
+  dutchAuctionEnabled = false,
+  activeResolvers = [],
+  partialFillEnabled = false
 }) => {
   const { signTransaction, signMessage } = useWallet();
   const [fromChain, setFromChain] = useState<Chain>(Chain.ETHEREUM);
@@ -70,11 +78,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [ethPrice, setEthPrice] = useState<number>(0);
   const [aptPrice, setAptPrice] = useState<number>(0);
   const [wethBalance, setWethBalance] = useState<string>('0');
-  const [partialFillAllowed, setPartialFillAllowed] = useState<boolean>(false);
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [partialFills, setPartialFills] = useState<any[]>([]);
-  const [dutchAuctionEnabled, setDutchAuctionEnabled] = useState<boolean>(false);
-  const [activeResolvers, setActiveResolvers] = useState<string[]>([]);
 
   // Get current balances
   const currentBalances = {
@@ -192,10 +197,12 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
       
       // Generate partial fill secrets if enabled
       let partialFillSecrets = null;
-      if (partialFillAllowed) {
-        // Import the secrets manager (you'll need to add this import at the top)
-        const { PartialFillSecretsManager } = await import('../utils/partialFillSecrets');
-        partialFillSecrets = PartialFillSecretsManager.generateSecrets(4); // 4 parts = 25% each
+      if (partialFillEnabled) {
+        // Generate N+1 secrets where N is number of active resolvers
+        const activeResolverCount = activeResolvers.length || 1;
+        const secretCount = activeResolverCount + 1;
+        partialFillSecrets = PartialFillSecretsManager.generateSecrets(secretCount);
+        console.log(`Generated ${secretCount} secrets for ${activeResolverCount} active resolvers`);
       }
 
       // Build order data
@@ -216,23 +223,24 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         receiver: toChain === Chain.ETHEREUM ? ethAccount : aptosAccount,
         deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
         nonce: Date.now().toString(),
-        partialFillAllowed,
+        partialFillEnabled,
         secretHash,
         // Add partial fill data if enabled
-        ...(partialFillAllowed && partialFillSecrets && {
+        ...(partialFillEnabled && partialFillSecrets && {
           partialFillSecrets,
-          maxParts: 4
+          maxParts: activeResolvers.length || 1,
+          activeResolvers: activeResolvers
         }),
         // Add Dutch auction if enabled and partial fills are allowed
-        ...(partialFillAllowed && dutchAuctionEnabled && {
+        ...(partialFillEnabled && dutchAuctionEnabled && {
           dutchAuction: {
             enabled: true,
             startTimestamp: Math.floor(Date.now() / 1000),
-            duration: 300, // 5 minutes
-            startRate: exchangeRate! * 1.02, // Start 2% above market
-            endRate: exchangeRate! * 0.98, // End 2% below market  
-            decrementInterval: 60, // Drop every minute
-            decrementAmount: (exchangeRate! * 0.04) / 5 // Total 4% drop over 5 intervals
+            duration: 120, // 2 minutes (fast demo)
+            startRate: exchangeRate! * 1.03, // Start 3% above market
+            endRate: exchangeRate! * 0.97, // End 3% below market  
+            decrementInterval: 15, // Drop every 15 seconds
+            decrementAmount: (exchangeRate! * 0.06) / 8 // Total 6% drop over 8 intervals
           }
         })
       };
@@ -348,8 +356,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           } else {
             throw new Error('Failed to create gasless order. WETH approval is required.');
           }
-        }
-        
       } else if (fromChain === Chain.APTOS) {
         // For APT -> ETH, sign the Fusion+ intent
         setSwapStatus({ stage: 'signing_intent', message: 'Signing Fusion+ intent...' });
@@ -771,7 +777,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
               console.log('🔓 Revealing secret to resolver...');
               
               // For partial fills, reveal the appropriate secret based on the fill
-              if (currentOrderData?.partialFillAllowed && currentOrderData?.partialFillSecrets && partialFills.length > 0) {
+              if (currentOrderData?.partialFillEnabled && currentOrderData?.partialFillSecrets && partialFills.length > 0) {
                 // Find the latest partial fill
                 const latestFill = partialFills[partialFills.length - 1];
                 const secretIndex = latestFill.secretIndex || 0;
@@ -844,21 +850,8 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             // Refresh APT balance
             if (data.destinationChain === 'APTOS' || data.toChain === 'APTOS') {
               try {
-                const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    function: '0x1::coin::balance',
-                    type_arguments: ['0x1::aptos_coin::AptosCoin'],
-                    arguments: [aptosAccount]
-                  })
-                });
-                if (response.ok) {
-                  const balance = await response.json();
-                  console.log('Updated APT balance:', (parseInt(balance) / 100000000).toFixed(6));
-                }
+                const balance = await getAptBalance(aptosAccount);
+                console.log('Updated APT balance:', balance);
               } catch (error) {
                 console.error('Failed to refresh APT balance:', error);
               }
@@ -960,26 +953,10 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
     }
   };
 
-  const handleResolverToggle = (resolverId: string, enabled: boolean) => {
-    setActiveResolvers(prev => {
-      if (enabled) {
-        return [...prev, resolverId];
-      } else {
-        return prev.filter(id => id !== resolverId);
-      }
-    });
-  };
-
   return (
     <div className="swap-interface">
       <h2>True Gasless Swap (Fusion+ V2)</h2>
       
-      {/* Resolver Status */}
-      <ResolverStatus 
-        onResolverToggle={handleResolverToggle}
-        onDutchAuctionToggle={setDutchAuctionEnabled}
-        dutchAuctionEnabled={dutchAuctionEnabled}
-      />
       
       {/* Show approval banner for WETH */}
       {fromChain === Chain.ETHEREUM && ethAccount && ethSigner && (
@@ -1032,27 +1009,15 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           </div>
         )}
 
-        {/* Partial Fill Toggle */}
-        <div className="partial-fill-section">
-          <label className="partial-fill-toggle">
-            <input
-              type="checkbox"
-              checked={partialFillAllowed}
-              onChange={(e) => setPartialFillAllowed(e.target.checked)}
-            />
-            <span className="toggle-text">
-              <div className="toggle-text-main">
-                🧩 Allow Partial Fills
-                <div className="info-button">
-                  i
-                  <div className="info-tooltip">
-                    Enables multiple resolvers to fill portions of your order for better rates and faster execution. Your order can be split into up to 4 parts (25% each).
-                  </div>
-                </div>
-              </div>
-            </span>
-          </label>
-        </div>
+
+        {/* Dutch Auction Progress */}
+        {dutchAuctionEnabled && currentOrder && isLoading && (
+          <DutchAuctionProgress 
+            auction={(currentOrder as any).dutchAuction}
+            isActive={true}
+            partialFills={partialFills}
+          />
+        )}
 
         {/* Partial Fill Progress */}
         {currentOrder && partialFills.length > 0 && (
@@ -1073,19 +1038,28 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
               />
             </div>
             <div className="fills-list">
-              {partialFills.map((fill, i) => (
-                <div key={i} className="fill-item">
-                  <div className="fill-info">
-                    <span className="resolver">Resolver {fill.resolver.slice(0, 6)}...</span>
-                    <span className="fill-amount">{fill.fillPercentage}%</span>
+              {partialFills.map((fill, i) => {
+                // Map resolver address to resolver name
+                const resolverName = 
+                  fill.resolver.toLowerCase() === '0x4718eafbbdc0ddaafeB520ff641c6aecba8042fc'.toLowerCase() ? 'Resolver-1' :
+                  fill.resolver.toLowerCase() === '0x3059921a0e8362110e8141f7c1d25eec3762294b'.toLowerCase() ? 'Resolver-2' :
+                  fill.resolver.toLowerCase() === '0xf288aac4d29092fd7ec652357d46900a4f05425b'.toLowerCase() ? 'Resolver-3' :
+                  `Resolver ${fill.resolver.slice(0, 6)}...`;
+                
+                return (
+                  <div key={i} className="fill-item">
+                    <div className="fill-info">
+                      <span className="resolver">{resolverName}</span>
+                      <span className="fill-amount">{fill.fillPercentage}%</span>
+                    </div>
+                    <div className="fill-status">
+                      {fill.status === 'COMPLETED' ? '✅ Complete' : 
+                       fill.status === 'PENDING' ? '⏳ Processing' : 
+                       '🔄 Active'}
+                    </div>
                   </div>
-                  <div className="fill-status">
-                    {fill.status === 'COMPLETED' ? '✅ Complete' : 
-                     fill.status === 'PENDING' ? '⏳ Processing' : 
-                     '🔄 Active'}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1093,10 +1067,11 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         <div className="swap-button-container">
           <button
             onClick={handleSwap}
-            disabled={isLoading || !fromAmount || !estimatedOutput}
+            disabled={isLoading || !fromAmount || !estimatedOutput || (partialFillEnabled && activeResolvers.length === 0)}
             className={`swap-button ${isLoading ? 'loading' : ''}`}
           >
             {isLoading ? 'Processing...' : 
+             partialFillEnabled && activeResolvers.length === 0 ? '⚠️ Select Resolvers' :
              currentOrder && partialFills.length > 0 && partialFills[partialFills.length - 1]?.cumulativePercentage < 100 ? 
              `🎯 Complete Swap (${partialFills[partialFills.length - 1]?.cumulativePercentage || 0}% filled)` : 
              '🚀 Swap Now'}
@@ -1111,13 +1086,24 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
           </div>
         </div>
 
+        {partialFillEnabled && activeResolvers.length === 0 && (
+          <div className="fill-warning">
+            ⚠️ No resolvers selected - please select at least one resolver
+          </div>
+        )}
+        
+        {partialFillEnabled && activeResolvers.length === 1 && (
+          <div className="fill-warning">
+            ⚠️ With 1 resolver active, only 50% of your order will be filled
+          </div>
+        )}
+
         {swapStatus.stage !== 'idle' && (
           <div className={`swap-status ${swapStatus.stage}`}>
             {swapStatus.message}
           </div>
         )}
       </div>
-
     </div>
   );
 };

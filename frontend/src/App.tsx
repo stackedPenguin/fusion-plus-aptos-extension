@@ -6,8 +6,9 @@ import './App.css';
 import SwapInterface from './components/SwapInterface';
 import { OrderService } from './services/OrderService';
 import DarkVeil from './components/DarkVeil';
-import { WalletTester } from './components/WalletTester';
+import ResolverStatus from './components/ResolverStatus';
 import { MartianWalletConnection } from './utils/martianWalletConnection';
+import { getAptBalance } from './utils/aptosClient';
 
 const web3Modal = new Web3Modal({
   network: 'sepolia',
@@ -24,6 +25,9 @@ function App() {
   const [orderService] = useState(() => new OrderService());
   const [selectedWallet, setSelectedWallet] = useState<string>('');
   const [martianConnected, setMartianConnected] = useState(false);
+  const [dutchAuctionEnabled, setDutchAuctionEnabled] = useState<boolean>(false);
+  const [activeResolvers, setActiveResolvers] = useState<string[]>([]);
+  const [partialFillEnabled, setPartialFillEnabled] = useState<boolean>(false);
 
   // Listen for Martian connection events
   useEffect(() => {
@@ -79,26 +83,8 @@ function App() {
     if (accountAddress) {
       const updateBalance = async () => {
         try {
-          const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              function: '0x1::coin::balance',
-              type_arguments: ['0x1::aptos_coin::AptosCoin'],
-              arguments: [accountAddress]
-            })
-          });
-          
-          if (response.ok) {
-            const result = await response.json();
-            const balance = result[0] || '0';
-            setAptosBalance((Number(balance) / 100000000).toFixed(6));
-          } else {
-            console.error('Failed to fetch balance:', await response.text());
-            setAptosBalance('0');
-          }
+          const balance = await getAptBalance(accountAddress);
+          setAptosBalance(balance);
         } catch (error) {
           console.error('Failed to get APT balance:', error);
           setAptosBalance('0');
@@ -176,23 +162,8 @@ function App() {
       if (aptosAccount?.address) {
         const updateAptBalance = async () => {
           try {
-            const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                function: '0x1::coin::balance',
-                type_arguments: ['0x1::aptos_coin::AptosCoin'],
-                arguments: [aptosAccount.address]
-              })
-            });
-            
-            if (response.ok) {
-              const result = await response.json();
-              const balance = result[0] || '0';
-              setAptosBalance((Number(balance) / 100000000).toFixed(6));
-            }
+            const balance = await getAptBalance(aptosAccount.address);
+            setAptosBalance(balance);
           } catch (error) {
             console.error('Failed to refresh APT balance:', error);
           }
@@ -226,6 +197,16 @@ function App() {
     setEthSigner(null);
   };
 
+  const handleResolverToggle = (resolverId: string, enabled: boolean) => {
+    setActiveResolvers(prev => {
+      if (enabled) {
+        return [...prev, resolverId];
+      } else {
+        return prev.filter(id => id !== resolverId);
+      }
+    });
+  };
+
   return (
     <div className="App">
       <div className="app-background">
@@ -247,8 +228,25 @@ function App() {
               <h1>Fusion+ Aptos Extension</h1>
               <span className="beta-badge">BETA</span>
             </div>
-            
-            <div className="wallet-connectors">
+          </div>
+          
+          <div className="swap-container">
+            <SwapInterface
+              ethAccount={ethAccount}
+              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
+              ethSigner={ethSigner}
+              orderService={orderService}
+              ethBalance={ethBalance}
+              aptosBalance={aptosBalance}
+              dutchAuctionEnabled={dutchAuctionEnabled}
+              activeResolvers={activeResolvers}
+              partialFillEnabled={partialFillEnabled}
+            />
+          </div>
+        </div>
+        
+        <div className="right-sidebar">
+              <div className="wallet-connectors">
               <div className={`wallet-connector ${ethAccount ? 'connected' : ''}`}>
                 <div className="wallet-icon">
                   <img src="/metamask-icon.png" alt="MetaMask" />
@@ -331,19 +329,16 @@ function App() {
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-          
-          <div className="swap-container">
-            <SwapInterface
-              ethAccount={ethAccount}
-              aptosAccount={aptosAccount?.address || (window as any).__martianAccount?.address || null}
-              ethSigner={ethSigner}
-              orderService={orderService}
-              ethBalance={ethBalance}
-              aptosBalance={aptosBalance}
-            />
-          </div>
+              </div>
+              
+              <ResolverStatus 
+                onResolverToggle={handleResolverToggle}
+                onDutchAuctionToggle={setDutchAuctionEnabled}
+                onPartialFillToggle={setPartialFillEnabled}
+                dutchAuctionEnabled={dutchAuctionEnabled}
+                partialFillEnabled={partialFillEnabled}
+                isSwapping={false}
+              />
         </div>
       </div>
     </div>

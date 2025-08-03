@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { WETHService } from './WETHService';
 import { CONTRACTS } from '../config/contracts';
+import { getAptBalance } from '../utils/aptosClient';
 
 interface WalletBalances {
   eth: string;
@@ -49,20 +50,11 @@ export class AssetFlowLogger {
       
       if (this.userAptosAddress) {
         // Get APT balance
-        const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            function: '0x1::coin::balance',
-            type_arguments: ['0x1::aptos_coin::AptosCoin'],
-            arguments: [this.userAptosAddress]
-          })
-        });
-        
-        if (response.ok) {
-          const result = await response.json();
-          const aptBalance = result[0] || '0';
-          balances.apt = (Number(aptBalance) / 100000000).toFixed(6);
+        try {
+          balances.apt = await getAptBalance(this.userAptosAddress);
+        } catch (error) {
+          console.error('Failed to get user APT balance:', error);
+          balances.apt = '0';
         }
       }
     } catch (error) {
@@ -98,20 +90,11 @@ export class AssetFlowLogger {
       
       // Get Aptos resolver balance
       const aptosResolverAddress = CONTRACTS.RESOLVER.APTOS;
-      const response = await fetch('https://fullnode.testnet.aptoslabs.com/v1/view', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          function: '0x1::coin::balance',
-          type_arguments: ['0x1::aptos_coin::AptosCoin'],
-          arguments: [aptosResolverAddress]
-        })
-      });
-      
-      if (response.ok) {
-        const result = await response.json();
-        const aptBalance = result[0] || '0';
-        balances.aptos.apt = (Number(aptBalance) / 100000000).toFixed(6);
+      try {
+        balances.aptos.apt = await getAptBalance(aptosResolverAddress);
+      } catch (error) {
+        console.error('Failed to get resolver APT balance:', error);
+        balances.aptos.apt = '0';
       }
     } catch (error) {
       console.error('Failed to get resolver balances:', error);

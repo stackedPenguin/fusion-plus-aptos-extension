@@ -281,3 +281,176 @@ Resolver: +0.0001 WETH, -0.082711 APT, paid all gas
 2. **Gasless Patterns**: EIP-712 + Aptos sponsorship
 3. **Atomic Guarantees**: Cryptographic enforcement
 4. **Economic Model**: Resolver incentives via fees and deposits
+
+---
+
+## Technical Stack Deep Dive
+
+### Blockchain Infrastructure
+
+#### Ethereum (Sepolia Testnet)
+- **Smart Contracts**: Solidity 0.8.20 with OpenZeppelin 5.0
+- **EIP Standards**: 
+  - EIP-712 (Typed structured data hashing and signing)
+  - EIP-2612 (Permit - gasless token approvals)
+  - EIP-1271 (Smart contract signatures)
+- **Libraries**:
+  - OpenZeppelin SafeERC20, ReentrancyGuard, ECDSA
+  - Ethers.js v6.9.0 for Web3 interactions
+
+#### Aptos (Testnet)
+- **Move Language**: Type-safe smart contract language
+- **Aptos SDK**: v1.39.0 with TypeScript bindings
+- **Native Features**:
+  - Ed25519 signature verification
+  - Table storage for escrow management
+  - Coin framework for APT handling
+  - Sponsored transaction pattern
+
+### Cryptographic Components
+
+#### Hashing & Security
+- **Keccak256**: Primary hash function for secret commitments
+  - Used for H = Keccak256(S) in HTLC implementation
+  - Ensures one-way commitment to secrets
+- **Ed25519**: Aptos native signature scheme
+- **ECDSA**: Ethereum signature recovery and verification
+- **BCS**: Binary Canonical Serialization for Aptos data
+
+#### Merkle Tree Implementation
+- **MerkleTreeJS**: v0.5.2 for partial fill management
+- **Tree Structure**:
+  - N+1 secrets for N-part fills
+  - Each secret controls cumulative fill percentage
+  - Merkle proofs enable verifiable partial reveals
+
+### Frontend Technology
+
+#### Core Framework
+- **React 18.2**: Component-based UI architecture
+- **TypeScript 4.9.5**: Type-safe development
+- **Web3Modal 1.9.12**: Multi-wallet connectivity
+
+#### Wallet Integration
+- **Ethereum Wallets**:
+  - MetaMask via Web3Modal
+  - WalletConnect support
+- **Aptos Wallets**:
+  - Petra Wallet Adapter (v0.4.5)
+  - Martian Wallet Adapter (v0.0.5)
+  - Pontem, Rise, Trust wallet adapters
+  - MSafe multisig support
+
+#### Real-time Communication
+- **Socket.IO Client 4.6.1**: WebSocket connections
+- **Event-driven architecture**: Real-time swap updates
+
+### Backend Services
+
+#### Order Engine (Port 3001)
+- **Express.js**: REST API framework
+- **Socket.IO Server**: WebSocket event broadcasting
+- **Zod 3.22.4**: Runtime type validation
+- **UUID**: Order ID generation
+- **Dutch Auction Engine**: Price discovery mechanism
+
+#### Resolver Service (Ports 8081-8083)
+- **Multi-instance Architecture**: 3 resolver strategies
+  - Aggressive: Fast fills, early execution
+  - Patient: Wait for better rates
+  - Opportunistic: Adaptive strategy
+- **Ethers.js & Aptos SDK**: Cross-chain execution
+- **Tweetnacl**: Additional cryptographic operations
+
+#### Relayer Service (Port 4000)
+- **Secret Management**: Secure storage until escrow finality
+- **Cross-chain Coordination**: 
+  - Monitors Ethereum (64 blocks finality)
+  - Monitors Aptos (instant finality)
+- **WebSocket Hub**: Central event relay
+- **LayerZero Integration**: Cross-chain message verification
+
+#### Cross-Chain Infrastructure
+
+##### LayerZero V2 Protocol
+- **Omnichain Messaging**: Native cross-chain communication
+- **Secret Reveal Synchronization**: 
+  - Ethereum LayerZeroAdapter.sol for outbound messages
+  - Aptos layerzero_adapter.move for inbound processing
+- **Trust Minimized**: Decentralized message verification
+- **Production Integration**: Simplified implementation for hackathon demo
+- **Event-Driven Architecture**: Secret reveal coordination across chains
+
+### Development & Testing Tools
+
+#### Build Tools
+- **TypeScript**: Full-stack type safety
+- **Nodemon**: Hot-reload development
+- **React Scripts**: Optimized production builds
+
+#### Testing Infrastructure
+- **Jest**: Unit testing framework
+- **Test Scripts**: 
+  - Gasless transaction testing
+  - Partial fill simulations
+  - End-to-end swap testing
+
+### Security & Best Practices
+
+#### Smart Contract Security
+- **ReentrancyGuard**: Prevent re-entrancy attacks
+- **SafeERC20**: Safe token transfers
+- **Time-based Security**: Timelocks for fund recovery
+- **Signature Validation**: Multi-layer verification
+
+#### Cryptographic Security
+- **Secret Generation**: 32-byte random values
+- **Hash Commitments**: One-way functions
+- **Atomic Execution**: All-or-nothing guarantees
+- **Economic Security**: Safety deposits and penalties
+
+### Infrastructure & Deployment
+
+#### Network Configuration
+- **Ethereum RPC**: Sepolia testnet endpoints
+- **Aptos RPC**: Testnet fullnode access
+- **CORS**: Configured for cross-origin requests
+
+#### Environment Management
+- **Dotenv**: Secure configuration
+- **Private Key Management**: Resolver wallets
+- **API Keys**: RPC endpoints and services
+
+### Advanced Features
+
+#### Meta-Transactions (Gasless)
+- **EIP-712 Signatures**: Structured data signing
+- **Permit Pattern**: Gasless WETH approvals
+- **Sponsored Transactions**: Aptos fee payer model
+- **Relay Pattern**: Resolver pays all gas
+
+#### Partial Fills
+- **Merkle Tree Secrets**: Verifiable partial reveals
+- **Cumulative Fills**: Progressive order completion
+- **Multi-resolver**: Parallel execution support
+- **Economic Incentives**: Competitive filling
+
+#### Dutch Auction
+- **Price Discovery**: 6% range (3% above to 3% below)
+- **Time-based Decay**: 15-second intervals
+- **Strategy Support**: Different resolver behaviors
+- **Fair Pricing**: Market-driven rates
+
+### Performance & Scalability
+
+#### Optimization Techniques
+- **Batch Operations**: Multiple swaps per transaction
+- **Event-driven Updates**: Real-time UI synchronization
+- **Connection Pooling**: Efficient RPC usage
+- **State Caching**: Reduced blockchain queries
+
+#### Monitoring & Analytics
+- **Event Logging**: Comprehensive swap tracking
+- **Asset Flow Logger**: Balance change monitoring
+- **Performance Metrics**: Execution time tracking
+- **Error Handling**: Graceful failure recovery

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@aptos-labs/ts-sdk": "^1.39.0",
     "@aptos-labs/wallet-adapter-react": "^2.1.0",
     "@martianwallet/aptos-wallet-adapter": "^0.0.5",
     "@msafe/aptos-wallet-adapter": "^1.1.8",
