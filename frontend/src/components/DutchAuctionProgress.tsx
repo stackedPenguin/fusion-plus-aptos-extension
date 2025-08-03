@@ -68,7 +68,16 @@ const DutchAuctionProgress: React.FC<DutchAuctionProgressProps> = ({
     return null;
   }
 
-  const formatRate = (rate: number) => rate.toFixed(2);
+  const formatRate = (rate: number) => {
+    // For very small numbers, use more decimal places
+    if (rate < 0.001) {
+      return rate.toFixed(6);
+    } else if (rate < 0.01) {
+      return rate.toFixed(4);
+    } else {
+      return rate.toFixed(2);
+    }
+  };
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -171,7 +180,7 @@ const DutchAuctionProgress: React.FC<DutchAuctionProgressProps> = ({
       </div>
 
       <div className="auction-explanation">
-        <p>📊 Rate decreases by {auction.decrementAmount.toFixed(2)} APT every {auction.decrementInterval}s</p>
+        <p>📊 Rate decreases by {formatRate(auction.decrementAmount)} APT every {auction.decrementInterval}s</p>
         <p>🎯 Final rate: 1 WETH = {formatRate(auction.endRate)} APT</p>
       </div>
     </div>

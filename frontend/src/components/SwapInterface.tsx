@@ -300,9 +300,9 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
               11155111 // Sepolia chain ID
             );
             
-            // For partial fills, we sign for the first chunk only
+            // For partial fills, don't pre-sign - sign individually per resolver request
             const amountToSign = partialFillEnabled 
-                ? (BigInt(orderData.fromAmount) / BigInt(2)).toString() // Simple 50% chunk
+                ? '0' // We'll sign individually for each partial fill
                 : orderData.fromAmount;
 
             // Prepare escrow parameters
@@ -485,7 +485,11 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
         };
         
         signature = '0x00'; // Deferred for Aptos
-        finalOrderData = { ...orderData, signature };
+        finalOrderData = { 
+          ...orderData, 
+          signature,
+          gasless: true // APT to ETH swaps are gasless (sponsored transactions)
+        };
       }
 
       setSwapStatus({ stage: 'submitting', message: 'Submitting order...' });
@@ -539,41 +543,63 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             secretHash: data.secretHash
           });
           
-          // Handle source escrow creation based on swap direction
-          if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
-            // For APT -> WETH swaps, automatically sign APT escrow transaction
-            console.log('🔄 Triggering gasless APT escrow creation...');
-            
-            const signedIntent = (window as any).__fusionPlusIntent;
-            if (!signedIntent) {
-              throw new Error('No signed intent found');
-            }
-            
-            // Update timelock from destination escrow
-            signedIntent.orderMessage.timelock = data.timelock;
-            
-            setTimeout(async () => {
-              try {
-                setSwapStatus({ stage: 'signing_tx', message: '✨ Signing gasless transaction (ignore wallet gas display)...' });
-                await logger.logSwapStep('✨ True Gasless Swap', 'You only sign, resolver pays gas');
+                        // Handle source escrow creation based on swap direction
+              if (fromChain === Chain.APTOS && data.chain === 'ETHEREUM') {
+                // For APT -> WETH swaps, automatically sign APT escrow transaction
+                console.log('🔄 Triggering gasless APT escrow creation...');
                 
-                // 1. Use the new sponsored transaction pattern (Shinami-style)
-                const sponsoredTx = new SponsoredTransactionV3(Network.TESTNET);
+                const signedIntent = (window as any).__fusionPlusIntent;
+                if (!signedIntent) {
+                  throw new Error('No signed intent found');
+                }
                 
-                // 2. Build the transaction - regular transaction, NOT multi-agent
-                const rawTransaction = await sponsoredTx.buildSponsoredEscrowTransaction(
-                  currentOrderData.maker,
-                  {
-                    escrowId: signedIntent.orderMessage.escrow_id,
-                    depositor: currentOrderData.maker,
-                    beneficiary: CONTRACTS.RESOLVER.APTOS, // beneficiary should be the resolver who will receive the APT
-                    amount: currentOrderData.fromAmount,
-                    hashlock: signedIntent.orderMessage.hashlock,
-                    timelock: signedIntent.orderMessage.timelock,
-                    safetyDeposit: '0', // 0 safety deposit for true gasless experience
-                    resolverAddress: CONTRACTS.RESOLVER.APTOS
-                  }
-                );
+                // Update timelock from destination escrow
+                signedIntent.orderMessage.timelock = data.timelock;
+                
+                setTimeout(async () => {
+                  try {
+                    setSwapStatus({ stage: 'signing_tx', message: '✨ Signing gasless transaction (ignore wallet gas display)...' });
+                    await logger.logSwapStep('✨ True Gasless Swap', 'You only sign, resolver pays gas');
+                    
+                    // Calculate the APT amount and escrow ID based on partial fill if applicable
+                    let aptEscrowAmount = currentOrderData.fromAmount;
+                    let aptEscrowId = signedIntent.orderMessage.escrow_id;
+                    
+                    if (data.isPartialFill && data.fillPercentage) {
+                      // For partial fills, only escrow the percentage being filled
+                      const fillPercentage = data.fillPercentage;
+                      // Convert percentage to integer basis points (multiply by 100 to avoid decimals)
+                      const fillPercentageBasisPoints = Math.floor(fillPercentage * 100); // 33.333... becomes 3333
+                      aptEscrowAmount = (BigInt(currentOrderData.fromAmount) * BigInt(fillPercentageBasisPoints) / BigInt(10000)).toString();
+                      
+                      // Generate a unique SOURCE escrow ID for this partial fill on Aptos
+                      // Use the destination escrow ID (from resolver) to create a corresponding source escrow ID
+                      const destinationEscrowId = data.escrowId;
+                      const sourceEscrowIdString = ethers.id(`source-${destinationEscrowId}-${currentOrderData.nonce}`);
+                      aptEscrowId = ethers.getBytes(sourceEscrowIdString);
+                      
+                      console.log(`🧩 Partial fill: Creating APT escrow for ${fillPercentage}% = ${(parseInt(aptEscrowAmount) / 100000000).toFixed(4)} APT`);
+                      console.log(`🆔 Destination escrow ID: ${destinationEscrowId}`);
+                      console.log(`🆔 Generated source escrow ID: ${sourceEscrowIdString}`);
+                    }
+                    
+                    // 1. Use the new sponsored transaction pattern (Shinami-style)
+                    const sponsoredTx = new SponsoredTransactionV3(Network.TESTNET);
+                    
+                    // 2. Build the transaction - regular transaction, NOT multi-agent
+                    const rawTransaction = await sponsoredTx.buildSponsoredEscrowTransaction(
+                      currentOrderData.maker,
+                      {
+                        escrowId: aptEscrowId,
+                        depositor: currentOrderData.maker,
+                        beneficiary: CONTRACTS.RESOLVER.APTOS, // beneficiary should be the resolver who will receive the APT
+                        amount: aptEscrowAmount, // Use calculated partial amount
+                        hashlock: signedIntent.orderMessage.hashlock,
+                        timelock: signedIntent.orderMessage.timelock,
+                        safetyDeposit: '0', // 0 safety deposit for true gasless experience
+                        resolverAddress: CONTRACTS.RESOLVER.APTOS
+                      }
+                    );
                 
                 // Debug: Check the transaction structure
                 console.log("Built raw transaction:", rawTransaction);
@@ -757,7 +783,9 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             if (data.isPartialFill && data.fillPercentage) {
               // For partial fills, only escrow the percentage being filled
               const fillPercentage = data.fillPercentage;
-              escrowAmount = (BigInt(currentOrderData.fromAmount) * BigInt(fillPercentage) / BigInt(100)).toString();
+              // Convert percentage to integer basis points (multiply by 100 to avoid decimals)
+              const fillPercentageBasisPoints = Math.floor(fillPercentage * 100); // 33.333... becomes 3333
+              escrowAmount = (BigInt(currentOrderData.fromAmount) * BigInt(fillPercentageBasisPoints) / BigInt(10000)).toString();
               console.log(`🧩 Partial fill: Creating escrow for ${fillPercentage}% = ${ethers.formatEther(escrowAmount)} WETH`);
             }
             
@@ -766,6 +794,52 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                 setSwapStatus({ stage: 'signing_tx', message: '✨ Creating gasless WETH escrow...' });
                 await logger.logSwapStep('🔒 Creating WETH Escrow', `Locking ${ethers.formatEther(escrowAmount)} WETH`);
                 
+                // For partial fills, create a new signature for this specific amount
+                let gaslessDataForThisFill = (currentOrderData as any).gaslessData;
+                
+                if (data.isPartialFill && partialFillEnabled) {
+                  console.log(`🔐 Signing for partial fill: ${data.fillPercentage}% = ${ethers.formatEther(escrowAmount)} WETH`);
+                  
+                  // Create new gasless transaction for this specific partial amount
+                  const gaslessEscrowAddress = CONTRACTS.ETHEREUM.GASLESS_ESCROW; // Get from contracts config
+                  const gaslessTx = new GaslessWETHTransaction(
+                    ethSigner.provider!,
+                    gaslessEscrowAddress,
+                    11155111 // Sepolia chain ID
+                  );
+                  
+                  // Get current resolver address dynamically from the specific resolver for this fill
+                  const resolverPort = data.resolverPort || 8081; // Default to resolver-1 if not specified
+                  const resolverResponse = await fetch(`http://localhost:${resolverPort}/api/resolver-address`);
+                  const resolverData = await resolverResponse.json();
+                  const resolverAddress = resolverData.address;
+                  console.log(`Using resolver address: ${resolverAddress} (port ${resolverPort})`);
+                  
+                  // Prepare escrow parameters for this partial fill
+                  const partialEscrowId = data.escrowId; // Use the specific escrow ID for this fill
+                  const escrowParams = {
+                    escrowId: ethers.getBytes(partialEscrowId),
+                    depositor: ethAccount,
+                    beneficiary: resolverAddress,
+                    token: CONTRACTS.ETHEREUM.WETH,
+                    amount: escrowAmount, // Use the partial amount
+                    hashlock: ethers.getBytes(currentOrderData.secretHash!),
+                    timelock: currentOrderData.deadline,
+                    gaslessEscrowAddress
+                  };
+                  
+                  // Sign meta-transaction for this partial amount
+                  const { signature: metaTxSig, deadline } = await gaslessTx.signMetaTx(
+                    ethSigner,
+                    escrowParams
+                  );
+                  
+                  // Create gasless data for this specific partial fill
+                  gaslessDataForThisFill = gaslessTx.prepareGaslessEscrowData(escrowParams, metaTxSig, deadline);
+                  
+                  console.log(`✅ Signed for ${data.fillPercentage}% partial fill`);
+                }
+                
                 // For gasless WETH escrow, resolver will handle it
                 socket.emit('order:signed', {
                   orderId: data.orderId,
@@ -773,7 +847,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                   toChain: 'APTOS',
                   signature: (currentOrderData as any).signature || '0x00',
                   signedOrder: currentOrderData,
-                  gaslessData: (currentOrderData as any).gaslessData,
+                  gaslessData: gaslessDataForThisFill,
                   secretHash: currentOrderData.secretHash,
                   isPartialFill: data.isPartialFill,
                   fillPercentage: data.fillPercentage,
@@ -1063,14 +1137,14 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
             <div className="progress-header">
               <h4>Fill Progress</h4>
               <span className="fill-percentage">
-                {partialFills.reduce((sum, fill) => sum + fill.fillPercentage, 0).toFixed(1)}% Complete
+                {Math.max(...partialFills.map(fill => fill.cumulativePercentage || 0), 0).toFixed(1)}% Complete
               </span>
             </div>
             <div className="progress-bar-container">
               <div 
                 className="progress-bar-fill" 
                 style={{ 
-                  width: `${partialFills.reduce((sum, fill) => sum + fill.fillPercentage, 0)}%`,
+                  width: `${Math.max(...partialFills.map(fill => fill.cumulativePercentage || 0), 0)}%`,
                   background: 'linear-gradient(90deg, #1dc872, #4ade80)'
                 }}
               />

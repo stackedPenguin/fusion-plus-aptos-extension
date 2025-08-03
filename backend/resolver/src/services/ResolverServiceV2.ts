@@ -692,7 +692,8 @@ export class ResolverServiceV2 {
         } else if (activeResolverCount === 2) {
           baseFillPercentage = 50; // Each resolver fills 50%
         } else {
-          baseFillPercentage = Math.floor(100 / activeResolverCount); // Equal distribution
+          // For exact equal distribution, use precise division
+          baseFillPercentage = 100 / activeResolverCount; // This gives 33.333... for 3 resolvers
         }
       }
       
@@ -719,21 +720,41 @@ export class ResolverServiceV2 {
         const resolverStrategy = this.getResolverStrategy();
         let shouldFillNow = false;
         
+        // For partial fills, be more aggressive to ensure all resolvers can participate
+        const currentFillPercentage = (order as any).filledPercentage || 0;
+        const isPartiallyFilled = currentFillPercentage > 0;
+        console.log(`   📊 Order fill status: ${currentFillPercentage}% filled, isPartiallyFilled: ${isPartiallyFilled}`);
+        
         if (resolverStrategy === 'aggressive') {
           // Resolver 1: Aggressive - fills early
           shouldFillNow = auctionStatus.percentComplete < 40;
         } else if (resolverStrategy === 'patient') {
-          // Resolver 2: Patient - waits for better rates
-          shouldFillNow = auctionStatus.percentComplete > 60;
+          // Resolver 2: Patient - waits for better rates, but more flexible for partial fills
+          if (isPartiallyFilled) {
+            // If order is already partially filled, be more aggressive to compete for remaining portion
+            shouldFillNow = auctionStatus.percentComplete >= 5;
+          } else {
+            // Original patient strategy for unfilled orders
+            shouldFillNow = auctionStatus.percentComplete > 60;
+          }
         } else {
           // Resolver 3: Opportunistic - fills based on timing
-          shouldFillNow = auctionStatus.percentComplete > 30 && auctionStatus.percentComplete < 80;
+          if (isPartiallyFilled) {
+            // If order is already partially filled, fill more aggressively
+            shouldFillNow = auctionStatus.percentComplete >= 3;
+          } else {
+            // Original opportunistic strategy
+            shouldFillNow = auctionStatus.percentComplete > 30 && auctionStatus.percentComplete < 80;
+          }
           
           // Also react to imminent rate drops
           if (auctionStatus.nextRateDropIn < 5) {
             shouldFillNow = true;
           }
         }
+        
+        console.log(`   🎯 Strategy decision (${resolverStrategy}): shouldFillNow = ${shouldFillNow}`);
+        console.log(`   📈 Factors: auctionProgress=${auctionStatus.percentComplete.toFixed(1)}%, orderFilled=${currentFillPercentage}%, isPartiallyFilled=${isPartiallyFilled}`);
         
         if (!shouldFillNow) {
           console.log(`   ⏳ Waiting for better timing (strategy: ${resolverStrategy})`);
@@ -776,11 +797,54 @@ export class ResolverServiceV2 {
         // Partial fill: distribute based on resolver index
         myStartFill = baseFillPercentage * activeResolverIndex;
         myEndFill = baseFillPercentage * (activeResolverIndex + 1);
-        console.log(`   📊 Resolver ${resolverNumber} fill range: ${myStartFill}% - ${myEndFill}% (partial fill)`);
+        
+        // For the last resolver, ensure we fill up to 100% to handle rounding
+        if (activeResolverIndex === activeResolverCount - 1) {
+          myEndFill = 100;
+        }
+        
+        console.log(`   📊 Resolver ${resolverNumber} fill range: ${myStartFill.toFixed(1)}% - ${myEndFill.toFixed(1)}% (partial fill)`);
       }
       
       // Check if it's our turn to fill based on current fill percentage
       if (currentFillPercentage < myStartFill) {
+        // For Dutch auctions, implement fallback mechanism to handle resolver failures
+        if (order.dutchAuction?.enabled) {
+          const { DutchAuctionPricing } = await import('../utils/dutchAuction');
+          const currentTime = Math.floor(Date.now() / 1000);
+          const auctionStatus = DutchAuctionPricing.getAuctionStatus(order.dutchAuction, currentTime);
+          
+          // If auction is significantly progressed (>15%) and earlier resolvers haven't filled,
+          // OR if order is already partially filled but stalled, allow fallback
+          // Also allow immediate fallback if partial fill has been stalled for too long
+          const hasBeenPartiallyFilled = currentFillPercentage > 0;
+          const auctionProgressedEnough = auctionStatus.percentComplete > 15;
+          const partialFillStalled = hasBeenPartiallyFilled && auctionStatus.percentComplete > 8;
+          
+                  if (auctionProgressedEnough || partialFillStalled) {
+          console.log(`   🚨 Dutch auction ${auctionStatus.percentComplete.toFixed(1)}% complete - allowing fallback fill due to earlier resolver delays`);
+          console.log(`   📊 Will fill from current ${currentFillPercentage.toFixed(1)}% up to my end range ${myEndFill.toFixed(1)}%`);
+          
+          // Calculate how much we can actually fill (from current position to our end)
+          const maxPossibleFill = myEndFill - currentFillPercentage;
+          
+          // DISABLED: Too aggressive, causing overfills
+          // For safety, limit fallback fill to at most double our original allocation  
+          // This prevents resolvers from attempting to fill amounts they can't afford
+          // const safeMaxFill = baseFillPercentage * 2;
+          // const availableFillPercentage = Math.min(maxPossibleFill, safeMaxFill);
+          
+          // TEMPORARY: Only allow filling the exact allocated portion to prevent overfills
+          const availableFillPercentage = Math.min(maxPossibleFill, baseFillPercentage);
+          
+          console.log(`   📊 Fallback calculation: maxPossible=${maxPossibleFill.toFixed(1)}%, limitToBase=${baseFillPercentage.toFixed(1)}%, final=${availableFillPercentage.toFixed(1)}%`);
+          
+          if (availableFillPercentage > 0) {
+            return availableFillPercentage;
+          }
+        }
+        }
+        
         console.log(`   ⏳ Waiting for earlier resolvers to fill (current: ${currentFillPercentage}%, my turn starts at: ${myStartFill}%)`);
         return 0;
       }
@@ -791,9 +855,9 @@ export class ResolverServiceV2 {
       }
       
       // Check if we can afford the fill
-      const targetAmount = (requiredAmount * BigInt(baseFillPercentage)) / 100n;
+      const targetAmount = (requiredAmount * BigInt(Math.floor(baseFillPercentage * 100))) / 10000n;
       if (balance < targetAmount) {
-        console.log(`   ❌ Cannot afford ${baseFillPercentage}% of the order`);
+        console.log(`   ❌ Cannot afford ${baseFillPercentage.toFixed(2)}% of the order`);
         return 0;
       }
       
@@ -928,7 +992,8 @@ export class ResolverServiceV2 {
       timelock: Math.floor(Date.now() / 1000) + 3600, // 1 hour timelock
       isPartialFill: true,
       fillPercentage,
-      secretIndex
+      secretIndex,
+      resolverPort: process.env.PORT || 8081 // Include resolver port for frontend
     });
     
     // For Fusion+ flow, we need to wait for the source escrow from user
@@ -944,74 +1009,22 @@ export class ResolverServiceV2 {
   private async createPartialEthereumEscrow(order: Order, escrowId: string, amount: string) {
     console.log(`   🏦 Creating partial Ethereum escrow`);
     
-    // For partial fills with gasless, we need to use the new gasless escrow contract
-    if (order.gasless && order.gaslessData && order.partialFillSecrets) {
-      console.log(`   ✨ Using gasless partial fill escrow`);
+    // For gasless partial fills, we DON'T create the escrow directly here
+    // Instead, we just emit an event to prompt the frontend to sign the partial meta-transaction
+    if (order.gasless) {
+      console.log(`   ✨ Gasless partial fill detected - requesting frontend signature`);
+      console.log(`   📝 Will NOT create escrow directly - waiting for meta-transaction signature`);
+      console.log(`   🎯 Frontend should sign for escrowId: ${escrowId}, amount: ${ethers.formatEther(amount)}`);
       
-      // First, check if we've already created the partial fill order
-      let partialFillOrderCreated = false;
-      try {
-        // Try to check if the order already exists
-        // For now, assume we need to create it (in production, you'd check the contract state)
-        partialFillOrderCreated = false;
-      } catch (error) {
-        partialFillOrderCreated = false;
-      }
-      
-      // Create the partial fill order if it doesn't exist
-      if (!partialFillOrderCreated) {
-        console.log(`   📝 Creating partial fill order first...`);
-        const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-        const deadline = Math.floor(Date.now() / 1000) + 1800; // 30 minutes to use signature
-        
-        // Extract signature components from gaslessData
-        const signature = {
-          v: order.gaslessData.metaTxV,
-          r: order.gaslessData.metaTxR,
-          s: order.gaslessData.metaTxS
-        };
-        
-        await this.chainService.createPartialFillOrder(
-          order.id, // baseOrderId
-          order.maker, // depositor
-          order.receiver, // beneficiary  
-          order.toToken, // token
-          order.minToAmount, // totalAmount
-          order.partialFillSecrets.merkleRoot, // merkleRoot
-          order.partialFillSecrets.secrets.length, // numFills
-          timelock,
-          deadline,
-          signature
-        );
-        console.log(`   ✅ Partial fill order created!`);
-      }
-      
-      // Now find the right secret index for this escrow
-      const secretIndex = this.findSecretIndexForEscrow(order, escrowId, amount);
-      const secret = order.partialFillSecrets.secrets[secretIndex];
-      const hashlock = ethers.keccak256(secret);
-      const merkleProof = order.partialFillSecrets.merkleProofs[secretIndex];
-      
-      console.log(`   🧩 Creating partial fill escrow for index ${secretIndex}`);
-      console.log(`   🔒 Secret: ${secret}`);
-      console.log(`   🔒 Hashlock: ${hashlock}`);
-      
-      const safetyDeposit = ethers.parseEther('0.001'); // Small safety deposit required
-      
-      // Create the individual partial fill escrow
-      await this.chainService.createPartialFillEscrow(
-        order.id, // baseOrderId
-        secretIndex, // fillIndex
-        amount,
-        hashlock,
-        merkleProof,
-        safetyDeposit.toString()
-      );
+      // The actual escrow creation will happen in executeGaslessWETHEscrow when we receive order:signed
+      // So we don't do anything here - just log and return
+      return;
     } else {
-      // Regular escrow creation
+      // For non-gasless orders, create regular escrow
+      console.log(`   🏦 Creating regular (non-gasless) Ethereum escrow`);
       const hashlock = ethers.getBytes(order.secretHash!);
       const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-      const safetyDeposit = ethers.parseEther('0');
+      const safetyDeposit = ethers.parseEther('0.000001'); // Very small safety deposit to satisfy contract requirement
       
       await this.chainService.createEthereumEscrow(
         escrowId,
@@ -1025,20 +1038,7 @@ export class ResolverServiceV2 {
     }
   }
 
-  private findSecretIndexForEscrow(order: Order, escrowId: string, amount: string): number {
-    // For simplicity, use a hash-based approach to deterministically assign secret indices
-    // In production, you might want a more sophisticated allocation strategy
-    if (!order.partialFillSecrets) {
-      throw new Error('No partial fill secrets available');
-    }
-    
-    // Generate a deterministic index based on escrow ID
-    const hash = ethers.keccak256(ethers.toUtf8Bytes(escrowId));
-    const index = parseInt(hash.slice(-2), 16) % order.partialFillSecrets.secrets.length;
-    
-    console.log(`   🎲 Generated secret index ${index} for escrow ${escrowId}`);
-    return index;
-  }
+
 
   private async createPartialAptosEscrow(order: Order, escrowId: string, amount: string) {
     console.log(`   🏦 Creating partial Aptos escrow`);
@@ -1402,7 +1402,7 @@ export class ResolverServiceV2 {
       // Create destination escrow with user as beneficiary
       const escrowId = ethers.id(order.id + '-dest-' + secretHash);
       const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-      const safetyDeposit = '0'; // No safety deposit for gasless experience
+      const safetyDeposit = ethers.parseEther('0.000001').toString(); // Very small safety deposit to satisfy contract requirement
       
       let destTxHash: string;
       
