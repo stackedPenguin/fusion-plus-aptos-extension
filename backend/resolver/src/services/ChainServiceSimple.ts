@@ -304,8 +304,8 @@ export class ChainServiceSimple {
       this.ethereum.signer
     );
 
-    // Calculate safety deposit (0.001 ETH)
-    const safetyDeposit = ethers.parseEther('0.001');
+    // No safety deposit for gasless experience
+    const safetyDeposit = ethers.parseEther('0');
 
     const tx = await escrowContract.createEscrowFor(
       escrowId,
@@ -324,13 +324,14 @@ export class ChainServiceSimple {
 
   async createAptosEscrow(
     escrowId: Uint8Array,
+    depositor: string,
     beneficiary: string,
     amount: string,
     hashlock: Uint8Array,
     timelock: number,
     safetyDeposit: string
   ): Promise<string> {
-    return this.aptos.createEscrow(escrowId, beneficiary, amount, hashlock, timelock, safetyDeposit);
+    return this.aptos.createEscrow(escrowId, depositor, beneficiary, amount, hashlock, timelock, safetyDeposit);
   }
 
   async withdrawAptosEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {

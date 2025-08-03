@@ -886,7 +886,7 @@ export class ResolverServiceV2 {
     // Use existing Ethereum escrow creation logic but with partial amounts
     const hashlock = ethers.getBytes(order.secretHash!);
     const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const safetyDeposit = ethers.parseEther('0.001');
+    const safetyDeposit = ethers.parseEther('0'); // No safety deposit for gasless experience
     
     await this.chainService.createEthereumEscrow(
       escrowId,
@@ -906,11 +906,12 @@ export class ResolverServiceV2 {
     const escrowIdBytes = ethers.getBytes(escrowId);
     const hashlock = ethers.getBytes(order.secretHash!);
     const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const safetyDeposit = (BigInt(amount) * 1n) / 1000n; // 0.1% safety deposit
+    const safetyDeposit = 0n; // No safety deposit for gasless experience
     
     await this.chainService.createAptosEscrow(
       escrowIdBytes,
-      order.receiver,
+      this.aptosAddress, // resolver is depositor on destination chain
+      order.receiver, // beneficiary
       amount,
       hashlock,
       timelock,
@@ -1166,9 +1167,7 @@ export class ResolverServiceV2 {
       // Create destination escrow with user as beneficiary
       const escrowId = ethers.id(order.id + '-dest-' + secretHash);
       const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-      const safetyDeposit = order.toChain === 'ETHEREUM' 
-        ? ethers.parseEther('0.001').toString()
-        : '100000'; // 0.001 APT
+      const safetyDeposit = '0'; // No safety deposit for gasless experience
       
       let destTxHash: string;
       
@@ -1214,6 +1213,7 @@ export class ResolverServiceV2 {
         console.log(`   Creating Aptos escrow for user ${order.receiver}`);
         destTxHash = await this.chainService.createAptosEscrow(
           ethers.getBytes(escrowId),
+          this.aptosAddress, // resolver is depositor on destination chain
           order.receiver, // User is beneficiary on destination
           fillAmount, // Use partial fill amount
           ethers.getBytes(secretHash),
@@ -2490,7 +2490,7 @@ export class ResolverServiceV2 {
     console.log(`   💰 Amount: ${ethers.formatEther(fill.amount)} WETH`);
     
     // Calculate safety deposit (0.001 ETH)
-    const safetyDeposit = ethers.parseEther('0.001');
+    const safetyDeposit = ethers.parseEther('0'); // No safety deposit for gasless experience
     
     try {
       // Prepare params struct
@@ -2622,6 +2622,7 @@ export class ResolverServiceV2 {
       // Find the matching fill
       let matchingFill: Fill | undefined;
       let matchingOrder: Order | undefined;
+      let destinationEscrowId: string | undefined;
       
       for (const [destEscrowId, fill] of this.monitoringFills) {
         // Match by orderId primarily, secretHash is optional for validation
@@ -2633,6 +2634,8 @@ export class ResolverServiceV2 {
           }
           matchingFill = fill;
           matchingOrder = this.activeOrders.get(orderId);
+          // The key in monitoringFills IS the destination escrow ID
+          destinationEscrowId = destEscrowId;
           break;
         }
       }
@@ -2646,8 +2649,17 @@ export class ResolverServiceV2 {
       console.log('\n💰 APT source escrow created on Aptos, both escrows now exist');
       console.log('   📝 Storing source escrow ID (hex):', escrowIdHex);
       console.log('   📝 Storing source escrow ID (array):', escrowId);
-      console.log('   📝 Destination escrow ID:', matchingFill.destinationEscrowId);
+      console.log('   📝 Destination escrow ID:', destinationEscrowId || 'not found in monitoring');
       console.log('   📝 Transaction hash:', data.transactionHash);
+      
+      if (!destinationEscrowId) {
+        console.error('   ❌ Destination escrow ID not found! Cannot complete swap.');
+        console.log('   🔍 Debug info:', {
+          fill: matchingFill,
+          monitoringFillsKeys: Array.from(this.monitoringFills.keys())
+        });
+        return;
+      }
       
       // Request secret from user now that both escrows exist
       console.log('   🔐 Both escrows created, requesting secret from user...');
@@ -2661,7 +2673,7 @@ export class ResolverServiceV2 {
         order: matchingOrder,
         fill: matchingFill,
         sourceEscrowId: escrowIdHex,
-        destinationEscrowId: matchingFill.destinationEscrowId!
+        destinationEscrowId: destinationEscrowId
       });
       
     } catch (error) {

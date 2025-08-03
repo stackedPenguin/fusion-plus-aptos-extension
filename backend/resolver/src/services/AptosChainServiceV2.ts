@@ -54,6 +54,7 @@ export class AptosChainServiceV2 {
 
   async createEscrow(
     escrowId: Uint8Array,
+    depositor: string,
     beneficiary: string,
     amount: string,
     hashlock: Uint8Array,
@@ -67,15 +68,20 @@ export class AptosChainServiceV2 {
       const transaction = await this.aptos.transaction.build.simple({
         sender: this.account.accountAddress,
         data: {
-          function: `${this.escrowAddress}::escrow::create_escrow`,
+          function: `${this.escrowAddress}::escrow_v2::create_escrow_delegated`,
           typeArguments: [],
           functionArguments: [
             Array.from(escrowId),
+            AccountAddress.fromString(depositor),
             AccountAddress.fromString(beneficiary),
             new U64(BigInt(amount)),
             Array.from(hashlock),
             new U64(BigInt(timelock)),
-            new U64(BigInt(safetyDeposit))
+            new U64(BigInt(0)), // nonce (not used in hackathon)
+            new U64(BigInt(Math.floor(Date.now() / 1000) + 300)), // expiry (5 minutes)
+            new U64(BigInt(safetyDeposit)),
+            new Uint8Array(32), // depositor_pubkey (dummy for hackathon)
+            new Uint8Array(64)  // signature (dummy for hackathon)
           ],
         },
       });
@@ -124,7 +130,7 @@ export class AptosChainServiceV2 {
       try {
         const escrowExists = await this.aptos.view({
           payload: {
-            function: `${this.escrowAddress}::escrow::escrow_exists`,
+            function: `${this.escrowAddress}::escrow_v2::escrow_exists`,
             typeArguments: [],
             functionArguments: [Array.from(escrowId)]
           }
@@ -150,7 +156,7 @@ export class AptosChainServiceV2 {
           const transaction = await this.aptos.transaction.build.simple({
             sender: this.account.accountAddress,
             data: {
-              function: `${this.escrowAddress}::escrow::withdraw`,
+              function: `${this.escrowAddress}::escrow_v2::withdraw`,
               typeArguments: [],
               functionArguments: [
                 Array.from(escrowId),

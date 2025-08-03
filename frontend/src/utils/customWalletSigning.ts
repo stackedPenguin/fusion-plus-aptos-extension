@@ -37,7 +37,7 @@ export class CustomWalletSigning {
     const regularTx = await this.aptos.transaction.build.simple({
       sender: userAddress,
       data: {
-        function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow::create_escrow',
+        function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded',
         typeArguments: [],
         functionArguments: [
           escrowParams.escrowId,
@@ -45,7 +45,8 @@ export class CustomWalletSigning {
           escrowParams.amount,
           escrowParams.hashlock,
           escrowParams.timelock,
-          escrowParams.safetyDeposit
+          escrowParams.safetyDeposit,
+          '0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532' // resolver address
         ]
       }
     });

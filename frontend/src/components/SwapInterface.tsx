@@ -532,7 +532,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                     amount: currentOrderData.fromAmount,
                     hashlock: signedIntent.orderMessage.hashlock,
                     timelock: signedIntent.orderMessage.timelock,
-                    safetyDeposit: '100000',
+                    safetyDeposit: '0', // 0 safety deposit for true gasless experience
                     resolverAddress: CONTRACTS.RESOLVER.APTOS
                   }
                 );
@@ -593,7 +593,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                           currentOrderData.fromAmount,
                           Array.from(signedIntent.orderMessage.hashlock),
                           signedIntent.orderMessage.timelock.toString(),
-                          '100000',
+                          '0', // No safety deposit for gasless experience
                           CONTRACTS.RESOLVER.APTOS
                         ]
                       };

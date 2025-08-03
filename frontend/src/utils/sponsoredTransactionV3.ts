@@ -46,7 +46,7 @@ export class SponsoredTransactionV3 {
       sender: userAddress,
       withFeePayer: true, // Critical: Enable fee payer mode
       data: {
-        // Regular function that only requires sender signature
+        // Use regular function with 0 safety deposit for gasless experience
         function: '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded',
         typeArguments: [],
         functionArguments: [

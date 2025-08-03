@@ -105,11 +105,22 @@ module fusion_plus::escrow_v2 {
         assert!(!table::contains(&escrow_store.escrows, escrow_id), E_ESCROW_ALREADY_EXISTS);
         assert!(amount > 0, E_INVALID_AMOUNT);
         assert!(timelock > timestamp::now_seconds(), E_INVALID_TIMELOCK);
-        assert!(safety_deposit_amount > 0, E_INSUFFICIENT_SAFETY_DEPOSIT);
-
-        // Transfer coins from depositor (user actually pays!)
+        
+        // For gasless experience: safety deposit is optional
+        // If safety_deposit_amount is 0, no safety deposit is required
+        
+        // Transfer escrow amount from depositor (user pays only the swap amount)
         let escrowed_coin = coin::withdraw<AptosCoin>(depositor, amount);
-        let safety_deposit = coin::withdraw<AptosCoin>(depositor, safety_deposit_amount);
+        
+        // Handle safety deposit
+        let safety_deposit = if (safety_deposit_amount > 0) {
+            // If safety deposit is required, user still pays it (for now)
+            // TODO: In production, have resolver sponsor this via fee payer
+            coin::withdraw<AptosCoin>(depositor, safety_deposit_amount)
+        } else {
+            // No safety deposit required - true gasless experience
+            coin::zero<AptosCoin>()
+        };
 
         let escrow = Escrow {
             depositor: depositor_addr,
@@ -124,11 +135,12 @@ module fusion_plus::escrow_v2 {
         };
 
         table::add(&mut escrow_store.escrows, escrow_id, escrow);
+        // Always add safety deposit to the table, even if it's zero
         table::add(&mut escrow_store.safety_deposits, escrow_id, safety_deposit);
     }
 
     /// Alternative: Create escrow using multi-agent transaction
-    /// User is first signer (pays APT), resolver is second signer (pays gas)
+    /// User is first signer (pays APT), resolver is second signer (pays gas + safety deposit)
     public entry fun create_escrow_multi_agent(
         depositor: &signer,
         resolver: &signer,
@@ -156,9 +168,67 @@ module fusion_plus::escrow_v2 {
         assert!(timelock > timestamp::now_seconds(), E_INVALID_TIMELOCK);
         assert!(safety_deposit_amount > 0, E_INSUFFICIENT_SAFETY_DEPOSIT);
 
-        // Transfer coins from depositor (user pays!)
+        // Transfer escrow amount from depositor (user pays only the swap amount)
         let escrowed_coin = coin::withdraw<AptosCoin>(depositor, amount);
-        let safety_deposit = coin::withdraw<AptosCoin>(depositor, safety_deposit_amount);
+        // Transfer safety deposit from resolver (resolver pays safety deposit + gas)
+        let safety_deposit = coin::withdraw<AptosCoin>(resolver, safety_deposit_amount);
+
+        let escrow = Escrow {
+            depositor: depositor_addr,
+            beneficiary,
+            amount,
+            hashlock,
+            timelock,
+            withdrawn: false,
+            refunded: false,
+            safety_deposit: safety_deposit_amount,
+            escrowed_coin
+        };
+
+        table::add(&mut escrow_store.escrows, escrow_id, escrow);
+        table::add(&mut escrow_store.safety_deposits, escrow_id, safety_deposit);
+    }
+
+    /// Create escrow with gasless transaction where resolver sponsors everything
+    /// This is the truly gasless experience - user only signs, resolver pays all
+    public entry fun create_escrow_gasless(
+        depositor: &signer,
+        resolver: &signer,
+        escrow_id: vector<u8>,
+        beneficiary: address,
+        amount: u64,
+        hashlock: vector<u8>,
+        timelock: u64,
+        safety_deposit_amount: u64
+    ) acquires EscrowStore, ResolverRegistry {
+        let depositor_addr = signer::address_of(depositor);
+        let resolver_addr = signer::address_of(resolver);
+        
+        // Verify resolver is authorized
+        let registry = borrow_global<ResolverRegistry>(@fusion_plus);
+        assert!(table::contains(&registry.authorized_resolvers, resolver_addr), E_NOT_AUTHORIZED_RESOLVER);
+        
+        // Ensure the escrow store exists
+        assert!(exists<EscrowStore>(@fusion_plus), E_ESCROW_NOT_FOUND);
+        let escrow_store = borrow_global_mut<EscrowStore>(@fusion_plus);
+        
+        // Check if escrow already exists
+        assert!(!table::contains(&escrow_store.escrows, escrow_id), E_ESCROW_ALREADY_EXISTS);
+        assert!(amount > 0, E_INVALID_AMOUNT);
+        assert!(timelock > timestamp::now_seconds(), E_INVALID_TIMELOCK);
+        
+        // In gasless mode, safety deposit can be 0 since resolver sponsors everything
+        // This prevents user from being charged anything beyond their swap amount
+        
+        // Transfer escrow amount from depositor (user pays only the exact swap amount)
+        let escrowed_coin = coin::withdraw<AptosCoin>(depositor, amount);
+        
+        // Safety deposit is optional in gasless mode - if provided, resolver pays it
+        let safety_deposit = if (safety_deposit_amount > 0) {
+            coin::withdraw<AptosCoin>(resolver, safety_deposit_amount)
+        } else {
+            coin::zero<AptosCoin>()
+        };
 
         let escrow = Escrow {
             depositor: depositor_addr,
@@ -202,9 +272,11 @@ module fusion_plus::escrow_v2 {
         let coin_to_transfer = coin::extract(&mut escrow.escrowed_coin, amount);
         coin::deposit(beneficiary, coin_to_transfer);
         
-        // Transfer safety deposit to withdrawer
-        let safety_deposit = table::remove(&mut escrow_store.safety_deposits, escrow_id);
-        coin::deposit(signer::address_of(withdrawer), safety_deposit);
+        // Transfer safety deposit to withdrawer (if it exists)
+        if (table::contains(&escrow_store.safety_deposits, escrow_id)) {
+            let safety_deposit = table::remove(&mut escrow_store.safety_deposits, escrow_id);
+            coin::deposit(signer::address_of(withdrawer), safety_deposit);
+        };
     }
 
     #[view]
@@ -240,9 +312,11 @@ module fusion_plus::escrow_v2 {
         let coin_to_transfer = coin::extract(&mut escrow.escrowed_coin, amount);
         coin::deposit(depositor, coin_to_transfer);
         
-        // Transfer safety deposit to refunder
-        let safety_deposit = table::remove(&mut escrow_store.safety_deposits, escrow_id);
-        coin::deposit(signer::address_of(refunder), safety_deposit);
+        // Transfer safety deposit to refunder (if it exists)
+        if (table::contains(&escrow_store.safety_deposits, escrow_id)) {
+            let safety_deposit = table::remove(&mut escrow_store.safety_deposits, escrow_id);
+            coin::deposit(signer::address_of(refunder), safety_deposit);
+        };
     }
 
     /// Keep the old create_escrow_delegated for backward compatibility

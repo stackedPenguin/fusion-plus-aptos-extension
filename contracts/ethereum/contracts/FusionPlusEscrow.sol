@@ -42,7 +42,7 @@ contract FusionPlusEscrow {
         require(escrows[_escrowId].depositor == address(0), "Escrow already exists");
         require(_amount > 0, "Amount must be greater than 0");
         require(_timelock > block.timestamp, "Timelock must be in the future");
-        require(msg.value > 0, "Safety deposit required");
+        // Safety deposit is optional for gasless experience
 
         if (_token == address(0)) {
             // ETH transfer
@@ -102,8 +102,10 @@ contract FusionPlusEscrow {
             IERC20(escrow.token).transfer(escrow.beneficiary, escrow.amount);
         }
         
-        // Transfer safety deposit to the withdrawer
-        payable(msg.sender).transfer(escrow.safetyDeposit);
+        // Transfer safety deposit to the withdrawer (if any)
+        if (escrow.safetyDeposit > 0) {
+            payable(msg.sender).transfer(escrow.safetyDeposit);
+        }
 
         emit EscrowWithdrawn(_escrowId, _secret);
     }
@@ -125,8 +127,10 @@ contract FusionPlusEscrow {
             IERC20(escrow.token).transfer(escrow.depositor, escrow.amount);
         }
         
-        // Transfer safety deposit to the refunder
-        payable(msg.sender).transfer(escrow.safetyDeposit);
+        // Transfer safety deposit to the refunder (if any)
+        if (escrow.safetyDeposit > 0) {
+            payable(msg.sender).transfer(escrow.safetyDeposit);
+        }
 
         emit EscrowRefunded(_escrowId);
     }
