@@ -138,7 +138,7 @@ contract FusionPlusGaslessEscrow is EIP712, ReentrancyGuard {
         if (block.timestamp > params.deadline) revert PermitExpired();
 
         // Verify meta-transaction signature
-        uint256 currentNonce = nonces[params.depositor]++;
+        uint256 currentNonce = nonces[params.depositor];
         
         bytes32 structHash = keccak256(
             abi.encode(
@@ -159,6 +159,9 @@ contract FusionPlusGaslessEscrow is EIP712, ReentrancyGuard {
         address signer = ECDSA.recover(hash, v, r, s);
         
         if (signer != params.depositor) revert InvalidSignature();
+
+        // Increment nonce AFTER successful verification
+        nonces[params.depositor]++;
 
         // For WETH, we need pre-approval
         _createEscrowInternal(

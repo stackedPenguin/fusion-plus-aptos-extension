@@ -25,7 +25,7 @@ export class AptosChainServiceV2 {
     this.aptos = new Aptos(config);
     
     // Parse escrow module address
-    this.escrowAddress = process.env.APTOS_ESCROW_MODULE || '0x38ddbe7b5d233e541d2e37490a40af10b8586acc7c7ccd142262c8cd6784bac0';
+    this.escrowAddress = process.env.APTOS_ESCROW_MODULE || '0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8';
     
     // Parse private key
     const rawPrivateKey = process.env.APTOS_PRIVATE_KEY!;
@@ -52,7 +52,7 @@ export class AptosChainServiceV2 {
     console.log('Resolver address from env:', process.env.APTOS_RESOLVER_ADDRESS);
   }
 
-  async createEscrow(
+  async createEscrowDelegated(
     escrowId: Uint8Array,
     depositor: string,
     beneficiary: string,
@@ -68,7 +68,7 @@ export class AptosChainServiceV2 {
       const transaction = await this.aptos.transaction.build.simple({
         sender: this.account.accountAddress,
         data: {
-          function: `${this.escrowAddress}::escrow_v2::create_escrow_delegated`,
+          function: `${this.escrowAddress}::escrow_v3::create_escrow_delegated`,
           typeArguments: [],
           functionArguments: [
             Array.from(escrowId),
@@ -118,6 +118,189 @@ export class AptosChainServiceV2 {
     }
   }
 
+  async createPartialFillOrder(
+    baseOrderId: Uint8Array,
+    depositor: string,
+    beneficiary: string,
+    totalAmount: string,
+    merkleRoot: Uint8Array,
+    numFills: number,
+    timelock: number,
+    nonce: number,
+    expiry: number,
+    depositorPubkey: Uint8Array,
+    signature: Uint8Array
+  ): Promise<string> {
+    try {
+      console.log('Creating Aptos partial fill order...');
+      
+      const transaction = await this.aptos.transaction.build.simple({
+        sender: this.account.accountAddress,
+        data: {
+          function: `${this.escrowAddress}::fusion_plus_partial_fill::create_partial_fill_order`,
+          functionArguments: [
+            baseOrderId,
+            AccountAddress.fromString(depositor),
+            AccountAddress.fromString(beneficiary),
+            new U64(BigInt(totalAmount)),
+            merkleRoot,
+            new U64(BigInt(numFills)),
+            new U64(BigInt(timelock)),
+            new U64(BigInt(nonce)),
+            new U64(BigInt(expiry)),
+            depositorPubkey,
+            signature
+          ],
+        },
+      });
+
+      const senderAuthenticator = this.aptos.transaction.sign({
+        signer: this.account,
+        transaction,
+      });
+
+      const pendingTransaction = await this.aptos.transaction.submit.simple({
+        transaction,
+        senderAuthenticator,
+      });
+
+      console.log(`Partial fill order created: ${pendingTransaction.hash}`);
+      
+      const executedTransaction = await this.aptos.waitForTransaction({
+        transactionHash: pendingTransaction.hash
+      });
+      
+      if (!executedTransaction.success) {
+        throw new Error(`Transaction failed: ${executedTransaction.vm_status}`);
+      }
+      
+      return pendingTransaction.hash;
+    } catch (error: any) {
+      console.error('Failed to create partial fill order:', error);
+      throw error;
+    }
+  }
+
+  async createPartialFillEscrow(
+    baseOrderId: Uint8Array,
+    fillIndex: number,
+    amount: string,
+    hashlock: Uint8Array,
+    merkleProof: Uint8Array[],
+    safetyDeposit: string
+  ): Promise<string> {
+    try {
+      console.log('Creating Aptos partial fill escrow...');
+      console.log(`  Fill index: ${fillIndex}`);
+      console.log(`  Amount: ${amount}`);
+      
+      const transaction = await this.aptos.transaction.build.simple({
+        sender: this.account.accountAddress,
+        data: {
+          function: `${this.escrowAddress}::fusion_plus_partial_fill::create_partial_fill_escrow`,
+          functionArguments: [
+            baseOrderId,
+            new U64(BigInt(fillIndex)),
+            new U64(BigInt(amount)),
+            hashlock,
+            merkleProof,
+            new U64(BigInt(safetyDeposit))
+          ],
+        },
+      });
+
+      const senderAuthenticator = this.aptos.transaction.sign({
+        signer: this.account,
+        transaction,
+      });
+
+      const pendingTransaction = await this.aptos.transaction.submit.simple({
+        transaction,
+        senderAuthenticator,
+      });
+
+      console.log(`Partial fill escrow created: ${pendingTransaction.hash}`);
+      
+      const executedTransaction = await this.aptos.waitForTransaction({
+        transactionHash: pendingTransaction.hash
+      });
+      
+      if (!executedTransaction.success) {
+        throw new Error(`Transaction failed: ${executedTransaction.vm_status}`);
+      }
+      
+      return pendingTransaction.hash;
+    } catch (error: any) {
+      console.error('Failed to create partial fill escrow:', error);
+      throw error;
+    }
+  }
+
+  async createEscrow(
+    escrowId: Uint8Array,
+    depositor: string,
+    beneficiary: string,
+    amount: string,
+    hashlock: Uint8Array,
+    timelock: number,
+    safetyDeposit: string
+  ): Promise<string> {
+    try {
+      console.log('Creating Aptos escrow (resolver funded)...');
+      console.log('  Depositor (resolver):', depositor);
+      console.log('  Beneficiary:', beneficiary);
+      console.log('  Amount:', amount);
+      console.log('  Safety deposit:', safetyDeposit);
+
+      // Build the transaction for regular escrow creation
+      const transaction = await this.aptos.transaction.build.simple({
+        sender: this.account.accountAddress,
+        data: {
+          function: `${this.escrowAddress}::escrow_v3::create_escrow_user_funded`,
+          functionArguments: [
+            escrowId,
+            beneficiary,
+            new U64(BigInt(amount)),
+            hashlock,
+            new U64(BigInt(timelock)),
+            new U64(BigInt(safetyDeposit)),
+            this.account.accountAddress // resolver_address as 7th argument
+          ],
+        },
+      });
+
+      // Sign the transaction
+      const senderAuthenticator = this.aptos.transaction.sign({
+        signer: this.account,
+        transaction,
+      });
+
+      // Submit the transaction
+      const pendingTransaction = await this.aptos.transaction.submit.simple({
+        transaction,
+        senderAuthenticator,
+      });
+
+      console.log(`Aptos escrow transaction submitted: ${pendingTransaction.hash}`);
+      
+      // Wait for transaction confirmation
+      const executedTransaction = await this.aptos.waitForTransaction({
+        transactionHash: pendingTransaction.hash
+      });
+      
+      if (!executedTransaction.success) {
+        throw new Error(`Transaction failed: ${executedTransaction.vm_status}`);
+      }
+      
+      console.log(`Aptos escrow created successfully: ${pendingTransaction.hash}`);
+      return pendingTransaction.hash;
+      
+    } catch (error: any) {
+      console.error('Failed to create Aptos escrow:', error.message || error);
+      throw error;
+    }
+  }
+
   async withdrawEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
     try {
       console.log('Withdrawing from Aptos escrow...');
@@ -130,7 +313,7 @@ export class AptosChainServiceV2 {
       try {
         const escrowExists = await this.aptos.view({
           payload: {
-            function: `${this.escrowAddress}::escrow_v2::escrow_exists`,
+            function: `${this.escrowAddress}::escrow_v3::escrow_exists`,
             typeArguments: [],
             functionArguments: [Array.from(escrowId)]
           }
@@ -156,7 +339,7 @@ export class AptosChainServiceV2 {
           const transaction = await this.aptos.transaction.build.simple({
             sender: this.account.accountAddress,
             data: {
-              function: `${this.escrowAddress}::escrow_v2::withdraw`,
+              function: `${this.escrowAddress}::escrow_v3::withdraw`,
               typeArguments: [],
               functionArguments: [
                 Array.from(escrowId),

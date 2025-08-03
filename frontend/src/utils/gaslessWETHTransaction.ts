@@ -56,7 +56,7 @@ export class GaslessWETHTransaction {
     this.gaslessEscrowAddress = gaslessEscrowAddress;
     
     this.domain = {
-      name: 'FusionPlusGaslessEscrow',
+      name: 'FusionPlusGaslessEscrowV2',
       version: '1',
       chainId: chainId,
       verifyingContract: gaslessEscrowAddress

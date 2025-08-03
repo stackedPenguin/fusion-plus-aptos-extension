@@ -39,7 +39,7 @@ export class MartianTransactionBuilder {
   }): any {
     // Use create_escrow_user_funded for true user-funded escrows
     // This function withdraws from the user's account, not the resolver's
-    const functionName = `0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca::escrow_v2::create_escrow_user_funded`;
+    const functionName = `0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8::escrow_v2::create_escrow_user_funded`;
     
     // For vector<u8> arguments in Move, Martian expects hex strings with 0x prefix
     const toHex = (uint8array: Uint8Array): string => {

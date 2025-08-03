@@ -23,7 +23,7 @@ async function initializeEscrow() {
     console.log('Admin address:', adminAccount.accountAddress.toString());
     
     // Build transaction to initialize escrow store
-    const escrowModule = process.env.APTOS_ESCROW_MODULE || process.env.APTOS_ESCROW_ADDRESS || '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca';
+    const escrowModule = process.env.APTOS_ESCROW_MODULE || process.env.APTOS_ESCROW_ADDRESS || '0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8';
     
     console.log('Initializing escrow contract...');
     const initTx = await aptos.transaction.build.simple({

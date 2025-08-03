@@ -60,9 +60,11 @@ interface Order {
   receiver: string;
   deadline: number;
   status: string;
+  nonce?: string; // Order nonce for replay protection
   secretHash?: string; // User-generated secret hash for Fusion+ protocol
   secretHashes?: string[];
   partialFillAllowed?: boolean;
+  partialFillEnabled?: boolean;
   partialFillSecrets?: {
     merkleRoot: string;
     secrets: string[];
@@ -86,6 +88,14 @@ interface Order {
     metaTxV: number;
     metaTxR: string;
     metaTxS: string;
+    // Partial fill support using Merkle tree
+    baseOrderId?: string;
+    totalAmount?: string;
+    merkleRoot?: string;
+    numFills?: number;
+    secrets?: string[];
+    merkleProofs?: string[][];
+    fillThresholds?: number[];
   };
   // Dutch auction configuration
   dutchAuction?: {
@@ -109,6 +119,12 @@ interface Fill {
   status: string;
   fillPercentage?: number;
   cumulativePercentage?: number;
+  cumulativeFillPercentage?: number; // Alias for cumulativePercentage
+  merkleIndex?: number; // Index in Merkle tree (for gasless partial fills)
+  partialSecret?: string; // The actual secret for this partial fill
+  actualEscrowId?: string; // The real escrow ID for partial fills (keccak256(baseOrderId + fillIndex))
+  baseOrderId?: string; // Base order ID for simple gasless partial fills
+  fillIndex?: number; // Fill index for simple gasless partial fills
   destinationEscrowId?: string;
   sourceEscrowId?: string;
   createdAt?: Date;
@@ -190,6 +206,13 @@ export class ResolverServiceV2 {
       this.socket.emit('subscribe:active');
     });
 
+    this.socket.on('frontend:get:resolver_address', (callback) => {
+        if (typeof callback === 'function') {
+            console.log(`[${this.resolverName}] Responding with resolver address: ${this.ethereumAddress}`);
+            callback({ ethereumAddress: this.ethereumAddress });
+        }
+    });
+
     this.socket.on('order:new', (order: Order) => {
       console.log('\n📋 Received order:new event');
       this.handleNewOrder(order);
@@ -242,11 +265,40 @@ export class ResolverServiceV2 {
         await this.handleSignedAptosOrder(data);
       } else if (data.fromChain === 'ETHEREUM') {
         // Handle ETHEREUM source orders (including partial fills)
-        if (data.isPartialFill && data.fillPercentage) {
-          console.log(`   🧩 Partial fill: ${data.fillPercentage}%`);
-          console.log(`   💰 Escrow amount: ${data.escrowAmount}`);
+            if (data.isPartialFill && data.escrowAmount) {
+      console.log(`   🧩 Creating WETH escrow for ${data.fillPercentage}% partial fill`);
+      
+      // Find the matching fill to get the correct destination escrow ID
+      let matchingFill: Fill | undefined;
+      for (const [_, fill] of this.monitoringFills) {
+        if (fill.orderId === data.orderId) {
+          matchingFill = fill;
+          break;
         }
-        await this.handleSignedEthereumOrder(data);
+      }
+      
+      if (matchingFill) {
+        console.log(`   🎯 Found matching partial fill: ${matchingFill.destinationEscrowId}`);
+        
+        // Create a temporary fill object with the correct amount for this partial fill
+        const partialFillData = { ...matchingFill, amount: data.escrowAmount };
+        
+        // Use the most up-to-date gaslessData from the signed order
+        const updatedOrder = { ...this.activeOrders.get(data.orderId)!, gaslessData: data.gaslessData, secretHash: data.secretHash };
+        
+        await this.executeGaslessWETHEscrow(updatedOrder, partialFillData);
+      } else {
+        console.error(`   ❌ No matching partial fill found for order ${data.orderId}`);
+      }
+    } else {
+      const order = this.activeOrders.get(data.orderId);
+      if (order) {
+        const fill = Array.from(this.monitoringFills.values()).find(f => f.orderId === data.orderId);
+        if (fill) {
+          await this.executeGaslessWETHEscrow(order, fill);
+        }
+      }
+    }
       }
     });
 
@@ -435,7 +487,7 @@ export class ResolverServiceV2 {
       
       // Handle partial fills differently (check both old and new property names)
       // Also route APT -> ETH through partial fill system for proper coordination
-      if (order.partialFillAllowed || (order as any).partialFillEnabled || 
+      if (order.partialFillAllowed || order.partialFillEnabled || 
           (order.fromChain === 'APTOS' && order.toChain === 'ETHEREUM')) {
         return this.handlePartialFillOrder(order);
       }
@@ -776,11 +828,21 @@ export class ResolverServiceV2 {
   ) {
     console.log(`\n🔧 Creating partial escrows for ${fillPercentage}% fill`);
     
+    // Track the partial fill - get current percentage first
+    const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
+    const cumulativePercentage = currentFillPercentage + fillPercentage;
+    console.log(`   📊 Current fill: ${currentFillPercentage}%, Adding: ${fillPercentage}%, Total will be: ${cumulativePercentage}%`);
+    
+    // Calculate fill index for simple gasless partial fills
+    const fillIndex = Math.floor(currentFillPercentage / fillPercentage); // 0 for first fill, 1 for second, etc.
+    const baseOrderId = order.id; // Use order ID as base order ID
+    
     // Generate unique escrow IDs for this partial fill
-    const fillIndex = Date.now(); // Simple fill index
     const partialEscrowId = PartialFillSecretsManager.generatePartialEscrowId(order.id, fillIndex);
     
     console.log(`   🆔 Partial escrow ID: ${partialEscrowId}`);
+    console.log(`   📊 Fill Index: ${fillIndex}`);
+    console.log(`   📋 Base Order ID: ${baseOrderId}`);
     
     // Create destination escrow with partial amount
     if (order.toChain === 'ETHEREUM') {
@@ -790,11 +852,6 @@ export class ResolverServiceV2 {
       // Create Aptos escrow for partial amount  
       await this.createPartialAptosEscrow(order, partialEscrowId, partialToAmount);
     }
-    
-    // Track the partial fill
-    const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
-    const cumulativePercentage = currentFillPercentage + fillPercentage;
-    console.log(`   📊 Current fill: ${currentFillPercentage}%, Adding: ${fillPercentage}%, Total will be: ${cumulativePercentage}%`);
     
     const fill = {
       id: partialEscrowId,
@@ -806,6 +863,8 @@ export class ResolverServiceV2 {
       secretHash: order.secretHash!,
       secretIndex,
       status: 'PENDING' as const,
+      baseOrderId, // Add base order ID for simple gasless partial fills
+      fillIndex,   // Add fill index for simple gasless partial fills
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -820,7 +879,9 @@ export class ResolverServiceV2 {
         status: 'PENDING',
         fillPercentage,
         cumulativePercentage,
-        destinationEscrowId: partialEscrowId
+        destinationEscrowId: partialEscrowId,
+        baseOrderId, // Add for simple gasless partial fills
+        fillIndex    // Add for simple gasless partial fills
       };
       
       console.log(`   📤 Creating fill record in order engine...`);
@@ -883,40 +944,213 @@ export class ResolverServiceV2 {
   private async createPartialEthereumEscrow(order: Order, escrowId: string, amount: string) {
     console.log(`   🏦 Creating partial Ethereum escrow`);
     
-    // Use existing Ethereum escrow creation logic but with partial amounts
-    const hashlock = ethers.getBytes(order.secretHash!);
-    const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const safetyDeposit = ethers.parseEther('0'); // No safety deposit for gasless experience
+    // For partial fills with gasless, we need to use the new gasless escrow contract
+    if (order.gasless && order.gaslessData && order.partialFillSecrets) {
+      console.log(`   ✨ Using gasless partial fill escrow`);
+      
+      // First, check if we've already created the partial fill order
+      let partialFillOrderCreated = false;
+      try {
+        // Try to check if the order already exists
+        // For now, assume we need to create it (in production, you'd check the contract state)
+        partialFillOrderCreated = false;
+      } catch (error) {
+        partialFillOrderCreated = false;
+      }
+      
+      // Create the partial fill order if it doesn't exist
+      if (!partialFillOrderCreated) {
+        console.log(`   📝 Creating partial fill order first...`);
+        const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+        const deadline = Math.floor(Date.now() / 1000) + 1800; // 30 minutes to use signature
+        
+        // Extract signature components from gaslessData
+        const signature = {
+          v: order.gaslessData.metaTxV,
+          r: order.gaslessData.metaTxR,
+          s: order.gaslessData.metaTxS
+        };
+        
+        await this.chainService.createPartialFillOrder(
+          order.id, // baseOrderId
+          order.maker, // depositor
+          order.receiver, // beneficiary  
+          order.toToken, // token
+          order.minToAmount, // totalAmount
+          order.partialFillSecrets.merkleRoot, // merkleRoot
+          order.partialFillSecrets.secrets.length, // numFills
+          timelock,
+          deadline,
+          signature
+        );
+        console.log(`   ✅ Partial fill order created!`);
+      }
+      
+      // Now find the right secret index for this escrow
+      const secretIndex = this.findSecretIndexForEscrow(order, escrowId, amount);
+      const secret = order.partialFillSecrets.secrets[secretIndex];
+      const hashlock = ethers.keccak256(secret);
+      const merkleProof = order.partialFillSecrets.merkleProofs[secretIndex];
+      
+      console.log(`   🧩 Creating partial fill escrow for index ${secretIndex}`);
+      console.log(`   🔒 Secret: ${secret}`);
+      console.log(`   🔒 Hashlock: ${hashlock}`);
+      
+      const safetyDeposit = ethers.parseEther('0.001'); // Small safety deposit required
+      
+      // Create the individual partial fill escrow
+      await this.chainService.createPartialFillEscrow(
+        order.id, // baseOrderId
+        secretIndex, // fillIndex
+        amount,
+        hashlock,
+        merkleProof,
+        safetyDeposit.toString()
+      );
+    } else {
+      // Regular escrow creation
+      const hashlock = ethers.getBytes(order.secretHash!);
+      const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+      const safetyDeposit = ethers.parseEther('0');
+      
+      await this.chainService.createEthereumEscrow(
+        escrowId,
+        order.receiver,
+        order.toToken,
+        amount,
+        order.secretHash!,
+        timelock,
+        safetyDeposit.toString()
+      );
+    }
+  }
+
+  private findSecretIndexForEscrow(order: Order, escrowId: string, amount: string): number {
+    // For simplicity, use a hash-based approach to deterministically assign secret indices
+    // In production, you might want a more sophisticated allocation strategy
+    if (!order.partialFillSecrets) {
+      throw new Error('No partial fill secrets available');
+    }
     
-    await this.chainService.createEthereumEscrow(
-      escrowId,
-      order.receiver,
-      order.toToken,
-      amount,
-      order.secretHash!,
-      timelock,
-      safetyDeposit.toString()
-    );
+    // Generate a deterministic index based on escrow ID
+    const hash = ethers.keccak256(ethers.toUtf8Bytes(escrowId));
+    const index = parseInt(hash.slice(-2), 16) % order.partialFillSecrets.secrets.length;
+    
+    console.log(`   🎲 Generated secret index ${index} for escrow ${escrowId}`);
+    return index;
   }
 
   private async createPartialAptosEscrow(order: Order, escrowId: string, amount: string) {
     console.log(`   🏦 Creating partial Aptos escrow`);
     
-    // Use existing Aptos escrow creation logic but with partial amounts
-    const escrowIdBytes = ethers.getBytes(escrowId);
-    const hashlock = ethers.getBytes(order.secretHash!);
-    const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const safetyDeposit = 0n; // No safety deposit for gasless experience
-    
-    await this.chainService.createAptosEscrow(
-      escrowIdBytes,
-      this.aptosAddress, // resolver is depositor on destination chain
-      order.receiver, // beneficiary
-      amount,
-      hashlock,
-      timelock,
-      safetyDeposit.toString()
-    );
+    // For partial fills, we need to use the partial fill contract
+    // HACKATHON: Temporarily disable partial fills on Aptos due to signature verification issues
+    if (order.partialFillSecrets && order.gaslessData && false) {
+      // First check if the partial fill order exists on Aptos
+      const baseOrderIdStr = order.gaslessData?.baseOrderId || order.id;
+      
+      // Convert UUID or hex string to bytes
+      let baseOrderId: Uint8Array;
+      if (baseOrderIdStr.includes('-')) {
+        // It's a UUID - convert to bytes by removing hyphens and treating as hex
+        const hexStr = '0x' + baseOrderIdStr.replace(/-/g, '');
+        baseOrderId = ethers.getBytes(hexStr);
+      } else {
+        // It's already a hex string
+        baseOrderId = ethers.getBytes(baseOrderIdStr.startsWith('0x') ? baseOrderIdStr : `0x${baseOrderIdStr}`);
+      }
+      
+      // TODO: Check if order exists on-chain (would need a view function)
+      // For now, assume we need to create it
+      
+      // Create the partial fill order on Aptos (user's signature is in gaslessData)
+      // For hackathon, use dummy values for signature verification
+      const depositorPubkey = new Uint8Array(32).fill(1); // Dummy pubkey
+      const signature = new Uint8Array(64).fill(1); // Dummy signature
+      
+      // Ensure addresses are properly formatted
+      let depositorAddress = order.maker.startsWith('0x') ? order.maker.slice(2) : order.maker;
+      let beneficiaryAddress = order.receiver.startsWith('0x') ? order.receiver.slice(2) : order.receiver;
+      
+      // Pad to 64 characters (without 0x prefix)
+      depositorAddress = depositorAddress.padStart(64, '0');
+      beneficiaryAddress = beneficiaryAddress.padStart(64, '0');
+      
+      try {
+        console.log('   📝 Creating partial fill order with:');
+        console.log('      Base order ID:', ethers.hexlify(baseOrderId));
+        console.log('      Depositor:', `0x${depositorAddress}`);
+        console.log('      Beneficiary:', `0x${beneficiaryAddress}`);
+        console.log('      Total amount:', order.fromAmount);
+        console.log('      Merkle root:', order.partialFillSecrets?.merkleRoot);
+        console.log('      Num fills:', (order.partialFillSecrets?.secrets.length || 1) - 1);
+        
+        await this.chainService.aptosChainService.createPartialFillOrder(
+          baseOrderId,
+          `0x${depositorAddress}`, // Properly formatted address
+          `0x${beneficiaryAddress}`, // Properly formatted address
+          order.fromAmount, // total amount
+          ethers.getBytes(order.partialFillSecrets?.merkleRoot || '0x'),
+          (order.partialFillSecrets?.secrets.length || 1) - 1, // num fills
+          order.deadline,
+          parseInt(order.nonce || '0'),
+          order.deadline,
+          depositorPubkey,
+          signature
+        );
+        console.log('   ✅ Partial fill order created successfully');
+      } catch (error: any) {
+        // Log full error for debugging
+        console.error('   ❌ Failed to create partial fill order:', error);
+        // Don't throw - order might already exist
+      }
+      
+      // Now create the specific partial fill escrow
+      const fillIndex = this.determineFillIndex(
+        this.monitoringFills.get(order.id + '-' + this.ethereumAddress) || {} as any,
+        order.gaslessData
+      );
+      
+      const secret = order.partialFillSecrets?.secrets[fillIndex] || '0x';
+      const hashlock = ethers.getBytes(ethers.keccak256(secret));
+      const merkleProof = order.partialFillSecrets?.merkleProofs[fillIndex].map(p => ethers.getBytes(p)) || [];
+      const safetyDeposit = '0'; // No safety deposit for gasless
+      
+      await this.chainService.aptosChainService.createPartialFillEscrow(
+        baseOrderId,
+        fillIndex,
+        amount,
+        hashlock,
+        merkleProof,
+        safetyDeposit
+      );
+    } else {
+      // Fallback to regular escrow for non-partial fills
+      // Convert UUID or hex string to bytes
+      let escrowIdBytes: Uint8Array;
+      if (escrowId.includes('-')) {
+        // It's a UUID - convert to bytes by removing hyphens and treating as hex
+        const hexStr = '0x' + escrowId.replace(/-/g, '');
+        escrowIdBytes = ethers.getBytes(hexStr);
+      } else {
+        // It's already a hex string
+        escrowIdBytes = ethers.getBytes(escrowId.startsWith('0x') ? escrowId : `0x${escrowId}`);
+      }
+      
+      const hashlock = ethers.getBytes(order.secretHash!);
+      const timelock = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+      const safetyDeposit = 0n;
+      
+      await this.chainService.createAptosEscrow(
+        escrowIdBytes,
+        this.aptosAddress,
+        order.receiver,
+        amount,
+        hashlock,
+        timelock,
+        safetyDeposit.toString()
+      );
+    }
   }
 
   private async getDestinationBalance(order: Order): Promise<bigint> {
@@ -1162,6 +1396,7 @@ export class ResolverServiceV2 {
         amount: fillAmount,
         secretHash,
         secretIndex: 0,
+        merkleIndex: 0, // For partial fills, merkleIndex = secretIndex
         status: 'PENDING'
       });
       // Create destination escrow with user as beneficiary
@@ -1540,7 +1775,53 @@ export class ResolverServiceV2 {
         // For ETH/WETH source, check if it's a gasless order
         if (order.gasless && order.gaslessData) {
           console.log('   ✨ Gasless order detected - using gasless escrow contract');
-          withdrawTx = await this.chainService.withdrawGaslessEscrow(sourceEscrowId, ethers.hexlify(secret));
+          console.log('   🏦 Withdrawing from gasless escrow contract:', process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS);
+          console.log('   🆔 Escrow ID:', sourceEscrowId);
+          console.log('   📋 Order gaslessData:', JSON.stringify(order.gaslessData, null, 2));
+          
+      // For partial fills, we need to calculate the correct escrow ID
+          let actualEscrowId = sourceEscrowId;
+          
+          // Debug partial fill detection
+          console.log('   🔍 Debugging partial fill detection:');
+          console.log(`   - order.partialFillAllowed: ${order.partialFillAllowed}`);
+          console.log(`   - order.partialFillEnabled: ${order.partialFillEnabled}`);
+          console.log(`   - fill?.fillIndex: ${fill?.fillIndex}`);
+          console.log(`   - fill object:`, fill);
+          
+          if ((order.partialFillAllowed || order.partialFillEnabled) && fill?.fillIndex !== undefined) {
+            // This is a simple partial fill - calculate the real escrow ID
+            const baseOrderId = order.id;
+            const fillIndex = fill.fillIndex;
+            
+            // The actual escrow ID is keccak256(baseOrderId + fillIndex)
+            actualEscrowId = ethers.keccak256(
+              ethers.solidityPacked(['bytes32', 'uint256'], [ethers.id(baseOrderId), fillIndex])
+            );
+            
+            console.log('   🧩 Simple partial fill detected:');
+            console.log(`   📋 Base Order ID: ${baseOrderId}`);
+            console.log(`   📊 Fill Index: ${fillIndex}`);
+            console.log(`   🔄 Calculated Escrow ID for withdrawal: ${actualEscrowId}`);
+          } else {
+            console.log('   ❌ Partial fill NOT detected - using original escrow ID for withdrawal');
+          }
+          
+          // Debug: Check where escrow was actually created
+          console.log('   🔍 DEBUGGING ESCROW EXISTENCE:');
+          console.log(`   📋 Order ID: ${order.id}`);
+          console.log(`   📦 Source Escrow ID: ${sourceEscrowId}`);
+          console.log(`   📦 Actual Escrow ID to withdraw: ${actualEscrowId}`);
+          console.log(`   🏦 Target Contract: ${process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS}`);
+          
+          // Check if this order has escrow creation events stored
+          console.log('   📊 Order details:');
+          console.log(`   - fromChain: ${order.fromChain}`);
+          console.log(`   - toChain: ${order.toChain}`);
+          console.log(`   - gasless: ${order.gasless}`);
+          console.log(`   - partialFillSecrets exists: ${!!order.partialFillSecrets}`);
+          
+          withdrawTx = await this.chainService.withdrawGaslessEscrow(actualEscrowId, ethers.hexlify(secret));
         } else {
           console.log('   🏦 Regular order - using standard escrow contract');
           withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
@@ -1708,7 +1989,46 @@ export class ResolverServiceV2 {
       
       if (fillOrder && fillOrder.gasless && fillOrder.gaslessData) {
         console.log('   ✨ Gasless order detected - using gasless escrow contract');
-        withdrawTx = await this.chainService.withdrawGaslessEscrow(sourceEscrowId, ethers.hexlify(secret));
+        console.log('   🏦 Withdrawing from gasless escrow contract:', process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS);
+        console.log('   🆔 Escrow ID:', sourceEscrowId);
+        
+        // For partial fills, we need to calculate the correct escrow ID
+        let actualEscrowId = sourceEscrowId;
+        if (fillOrder.partialFillSecrets && fill?.merkleIndex !== undefined) {
+          // This is a partial fill - calculate the real escrow ID
+          const baseOrderId = fillOrder.gaslessData?.baseOrderId || fillOrder.id;
+          const fillIndex = fill.merkleIndex;
+          
+          // Convert baseOrderId to bytes32
+          const baseOrderIdBytes32 = ethers.id(baseOrderId);
+          
+          // The actual escrow ID is keccak256(baseOrderId + fillIndex)
+          actualEscrowId = ethers.keccak256(
+            ethers.solidityPacked(['bytes32', 'uint256'], [baseOrderIdBytes32, fillIndex])
+          );
+          
+          console.log('   🧩 Partial fill detected:');
+          console.log(`   📋 Base Order ID: ${baseOrderId}`);
+          console.log(`   📊 Fill Index: ${fillIndex}`);
+          console.log(`   🔄 Calculated Escrow ID: ${actualEscrowId}`);
+        }
+        
+        // Debug: Check where escrow was actually created
+        console.log('   🔍 DEBUGGING ESCROW EXISTENCE (Fill method):');
+        console.log(`   📋 Fill Order ID: ${fill.orderId}`);
+        console.log(`   📦 Source Escrow ID: ${sourceEscrowId}`);
+        console.log(`   📦 Actual Escrow ID to withdraw: ${actualEscrowId}`);
+        console.log(`   🏦 Target Contract: ${process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS}`);
+        
+        if (fillOrder) {
+          console.log('   📊 Fill Order details:');
+          console.log(`   - fromChain: ${fillOrder.fromChain}`);
+          console.log(`   - toChain: ${fillOrder.toChain}`);
+          console.log(`   - gasless: ${fillOrder.gasless}`);
+          console.log(`   - partialFillSecrets exists: ${!!fillOrder.partialFillSecrets}`);
+        }
+        
+        withdrawTx = await this.chainService.withdrawGaslessEscrow(actualEscrowId, ethers.hexlify(secret));
       } else {
         console.log('   🏦 Regular order - using standard escrow contract');
         withdrawTx = await this.chainService.withdrawEthereumEscrow(sourceEscrowId, ethers.hexlify(secret));
@@ -2361,6 +2681,7 @@ export class ResolverServiceV2 {
         amount: order.fromAmount,
         secretHash: order.secretHash || '',
         secretIndex: 0,
+        merkleIndex: 0, // For partial fills, merkleIndex = secretIndex
         status: 'PENDING',
         sourceEscrowId: escrowIdHex
       };
@@ -2427,6 +2748,7 @@ export class ResolverServiceV2 {
         amount: order.fromAmount,
         secretHash: order.secretHash || '',
         secretIndex: 0,
+        merkleIndex: 0, // For partial fills, merkleIndex = secretIndex
         status: 'PENDING'
       };
     }
@@ -2474,7 +2796,11 @@ export class ResolverServiceV2 {
     
     // ABI for the gasless escrow contract with struct parameter
     const gaslessEscrowAbi = [
-      'function createEscrowWithMetaTx(tuple(bytes32 escrowId, address depositor, address beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock, uint256 deadline) params, uint8 v, bytes32 r, bytes32 s) external payable'
+      'function createEscrowWithMetaTx(tuple(bytes32 escrowId, address depositor, address beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock, uint256 deadline) params, uint8 v, bytes32 r, bytes32 s) external payable',
+      'function createGaslessPartialFillEscrow(tuple(bytes32 escrowId, address depositor, address beneficiary, address token, uint256 amount, bytes32 hashlock, uint256 timelock, uint256 deadline) params, bytes32 baseOrderId, uint256 fillIndex, uint8 v, bytes32 r, bytes32 s) external payable',
+      'function createPartialFillOrder(tuple(bytes32 baseOrderId, address depositor, address beneficiary, address token, uint256 totalAmount, bytes32 merkleRoot, uint256 numFills, uint256 timelock, uint256 deadline) params, uint8 v, bytes32 r, bytes32 s) external',
+      'function createPartialFillEscrow(bytes32 baseOrderId, uint256 fillIndex, uint256 amount, bytes32 hashlock, bytes32[] calldata merkleProof) external payable',
+      'function getPartialFillOrder(bytes32 baseOrderId) external view returns (uint256 totalAmount, uint256 filledAmount, bytes32 merkleRoot, uint256 numFills)'
     ];
     
     const gaslessEscrow = new ethers.Contract(
@@ -2486,8 +2812,10 @@ export class ResolverServiceV2 {
     const { gaslessData } = order;
     
     console.log(`   📝 Creating escrow with meta-tx signature...`);
+    console.log(`   🏦 Using gasless contract: ${gaslessEscrowAddress}`);
     console.log(`   👤 Depositor: ${gaslessData.depositor}`);
     console.log(`   💰 Amount: ${ethers.formatEther(fill.amount)} WETH`);
+    console.log(`   🆔 Escrow ID: ${gaslessData.escrowId}`);
     
     // Calculate safety deposit (0.001 ETH)
     const safetyDeposit = ethers.parseEther('0'); // No safety deposit for gasless experience
@@ -2505,13 +2833,19 @@ export class ResolverServiceV2 {
         deadline: gaslessData.deadline
       };
       
-      // Execute the gasless escrow creation
+      // Always use createEscrowWithMetaTx since frontend signs for this function
+      // For simple partial fills, we just create individual escrows for each portion
+      console.log(`   📝 Using createEscrowWithMetaTx (frontend signs for this function)`);
+      if (order.partialFillAllowed || order.partialFillEnabled) {
+        console.log(`   📊 This is a partial fill - escrow amount: ${ethers.formatEther(fill.amount)} WETH`);
+      }
+      
       const tx = await gaslessEscrow.createEscrowWithMetaTx(
         metaTxParams,
         gaslessData.metaTxV,
         gaslessData.metaTxR,
         gaslessData.metaTxS,
-        { value: safetyDeposit } // Resolver pays safety deposit
+        { value: safetyDeposit }
       );
       
       console.log(`   📤 Gasless escrow transaction sent: ${tx.hash}`);
@@ -2521,10 +2855,15 @@ export class ResolverServiceV2 {
       console.log(`   ✅ Gasless escrow created! Gas used: ${receipt.gasUsed.toString()}`);
       console.log(`   💸 Resolver paid all gas fees!`);
       
-      // Emit source escrow created event
+      // Emit source escrow created event with correct escrow ID
+      const emitEscrowId = fill.actualEscrowId || gaslessData.escrowId; // Use actual partial fill ID if available
+      console.log(`   📡 Emitting escrow:source:created with ID: ${emitEscrowId}`);
+      console.log(`   - Original gaslessData.escrowId: ${gaslessData.escrowId}`);
+      console.log(`   - Actual escrow ID (for partial fill): ${fill.actualEscrowId || 'N/A'}`);
+      
       this.socket.emit('escrow:source:created', {
         orderId: order.id,
-        escrowId: gaslessData.escrowId,
+        escrowId: emitEscrowId, // Use the correct escrow ID!
         chain: 'ETHEREUM',
         amount: fill.amount, // Use the actual fill amount for partial fills
         txHash: receipt.hash,
@@ -2584,6 +2923,37 @@ export class ResolverServiceV2 {
       console.error(`   ❌ Gasless escrow transaction failed:`, error);
       throw error;
     }
+  }
+  
+  private async checkPartialFillOrderExists(gaslessEscrow: ethers.Contract, baseOrderId: string): Promise<boolean> {
+    try {
+      const orderData = await gaslessEscrow.getPartialFillOrder(baseOrderId);
+      // If totalAmount > 0, order exists
+      return orderData.totalAmount > 0;
+    } catch (error) {
+      // Order doesn't exist
+      return false;
+    }
+  }
+  
+  private determineFillIndex(fill: Fill, gaslessData: any): number {
+    // If fill has a specific index, use it
+    if (fill.merkleIndex !== undefined) {
+      return fill.merkleIndex;
+    }
+    
+    // Otherwise, determine based on cumulative fill percentage
+    const fillThresholds = gaslessData.fillThresholds || [25, 50, 75, 100];
+    const cumulativeFillPercentage = fill.cumulativeFillPercentage || fill.cumulativePercentage || fill.fillPercentage || 0;
+    
+    for (let i = 0; i < fillThresholds.length; i++) {
+      if (cumulativeFillPercentage <= fillThresholds[i]) {
+        return i;
+      }
+    }
+    
+    // Default to last index
+    return fillThresholds.length - 1;
   }
 
   private async createSourceEscrowForAPT(order: Order, fill: Fill): Promise<void> {

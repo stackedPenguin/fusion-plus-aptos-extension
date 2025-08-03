@@ -4,7 +4,7 @@ const { Aptos, AptosConfig, Network } = require('@aptos-labs/ts-sdk');
 const { ethers } = require('ethers');
 
 async function checkEscrow() {
-  const escrowModule = '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca';
+  const escrowModule = '0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8';
   
   // Initialize Aptos client
   const config = new AptosConfig({ network: Network.TESTNET });

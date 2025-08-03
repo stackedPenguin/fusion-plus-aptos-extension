@@ -80,8 +80,8 @@ contract FusionPlusPermit is EIP712, ReentrancyGuard {
         // Check spender is msg.sender
         require(spender == msg.sender, "Spender must be msg.sender");
 
-        // Get current nonce and increment
-        uint256 currentNonce = nonces[owner]++;
+        // Get current nonce for verification
+        uint256 currentNonce = nonces[owner];
 
         // Create permit hash
         bytes32 structHash = keccak256(
@@ -103,6 +103,9 @@ contract FusionPlusPermit is EIP712, ReentrancyGuard {
         // Verify signature
         address signer = ECDSA.recover(hash, v, r, s);
         if (signer != owner) revert InvalidSignature();
+
+        // Increment nonce AFTER successful verification
+        nonces[owner]++;
 
         // Mark permit as used
         usedPermits[hash] = true;

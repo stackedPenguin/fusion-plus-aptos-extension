@@ -16,7 +16,6 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { SponsoredTransactionV3 } from '../utils/sponsoredTransactionV3';
 import { getAptBalance } from '../utils/aptosClient';
 import { GaslessWETHTransaction } from '../utils/gaslessWETHTransaction';
-import { PartialFillSecretsManager } from '../utils/partialFillSecrets';
 import DutchAuctionProgress from './DutchAuctionProgress';
 import './SwapInterface.css';
 
@@ -68,6 +67,16 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [partialFills, setPartialFills] = useState<any[]>([]);
+  const [resolverAddress, setResolverAddress] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Fetch the resolver address from the backend
+    const socket = (orderService as any).socket;
+    socket.emit('frontend:get:resolver_address', (data: { ethereumAddress: string }) => {
+        console.log('Received resolver address:', data.ethereumAddress);
+        setResolverAddress(data.ethereumAddress);
+    });
+  }, [orderService]);
 
   // Get current balances
   const currentBalances = {
@@ -181,16 +190,6 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         revealed: false
       };
       
-      // Generate partial fill secrets if enabled
-      let partialFillSecrets = null;
-      if (partialFillEnabled) {
-        // Generate N+1 secrets where N is number of active resolvers
-        const activeResolverCount = activeResolvers.length || 1;
-        const secretCount = activeResolverCount + 1;
-        partialFillSecrets = PartialFillSecretsManager.generateSecrets(secretCount);
-        console.log(`Generated ${secretCount} secrets for ${activeResolverCount} active resolvers`);
-      }
-
       // Build order data
       const orderData = {
         fromChain,
@@ -211,9 +210,8 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
         nonce: Date.now().toString(),
         partialFillEnabled,
         secretHash,
-        // Add partial fill data if enabled
-        ...(partialFillEnabled && partialFillSecrets && {
-          partialFillSecrets,
+        // Add partial fill flags, but not secrets yet
+        ...(partialFillEnabled && {
           maxParts: activeResolvers.length || 1,
           activeResolvers: activeResolvers
         }),
@@ -295,21 +293,26 @@ const SwapInterface: React.FC<SwapInterfaceProps> = ({
           }
           
           if (allowance >= BigInt(swapAmount) || allowance === ethers.MaxUint256) {
-            // Use gasless meta-transaction
+            // Use gasless meta-transaction for both full and partial fills
             const gaslessTx = new GaslessWETHTransaction(
-              await ethSigner.provider!,
+              ethSigner.provider!,
               gaslessEscrowAddress,
               11155111 // Sepolia chain ID
             );
             
+            // For partial fills, we sign for the first chunk only
+            const amountToSign = partialFillEnabled 
+                ? (BigInt(orderData.fromAmount) / BigInt(2)).toString() // Simple 50% chunk
+                : orderData.fromAmount;
+
             // Prepare escrow parameters
             const sourceEscrowId = ethers.id(orderData.nonce + '-source-' + secretHash);
             const escrowParams = {
               escrowId: ethers.getBytes(sourceEscrowId),
               depositor: ethAccount,
-              beneficiary: CONTRACTS.RESOLVER.ETHEREUM,
+              beneficiary: resolverAddress || CONTRACTS.RESOLVER.ETHEREUM,
               token: CONTRACTS.ETHEREUM.WETH,
-              amount: orderData.fromAmount,
+              amount: amountToSign,
               hashlock: ethers.getBytes(secretHash),
               timelock: orderData.deadline,
               gaslessEscrowAddress
@@ -563,7 +566,7 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                   {
                     escrowId: signedIntent.orderMessage.escrow_id,
                     depositor: currentOrderData.maker,
-                    beneficiary: currentOrderData.maker, // beneficiary is the maker (they receive funds back if refunded)
+                    beneficiary: CONTRACTS.RESOLVER.APTOS, // beneficiary should be the resolver who will receive the APT
                     amount: currentOrderData.fromAmount,
                     hashlock: signedIntent.orderMessage.hashlock,
                     timelock: signedIntent.orderMessage.timelock,
@@ -620,11 +623,11 @@ Expires: ${new Date(expiry * 1000).toLocaleString()}`;
                     try {
                       // Extract the payload from the transaction for Pontem's API
                       const payload = {
-                        function: `${CONTRACTS.APTOS.ESCROW}::escrow_v2::create_escrow_user_funded`,
+                        function: `${CONTRACTS.APTOS.ESCROW}::escrow_v3::create_escrow_user_funded`,
                         type_arguments: [],
                         arguments: [
                           Array.from(signedIntent.orderMessage.escrow_id),
-                          currentOrderData.maker,
+                          CONTRACTS.RESOLVER.APTOS, // beneficiary should be the resolver
                           currentOrderData.fromAmount,
                           Array.from(signedIntent.orderMessage.hashlock),
                           signedIntent.orderMessage.timelock.toString(),

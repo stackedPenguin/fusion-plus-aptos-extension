@@ -34,7 +34,15 @@ export const GaslessDataSchema = z.object({
   deadline: z.string(),
   metaTxV: z.number(),
   metaTxR: z.string(),
-  metaTxS: z.string()
+  metaTxS: z.string(),
+  // Partial fill support using Merkle tree
+  baseOrderId: z.string().optional(),
+  totalAmount: z.string().optional(),
+  merkleRoot: z.string().optional(),
+  numFills: z.number().optional(),
+  secrets: z.array(z.string()).optional(),
+  merkleProofs: z.array(z.array(z.string())).optional(),
+  fillThresholds: z.array(z.number()).optional()
 });
 
 // Partial fill secrets schema using Merkle tree
@@ -107,9 +115,13 @@ export interface Fill {
   amount: string;
   fillPercentage: number; // Percentage this fill represents (0-100)
   cumulativePercentage: number; // Total filled including this fill (0-100)
+  cumulativeFillPercentage?: number; // Alias for cumulativePercentage
   secretHash: string;
   secretIndex: number; // Index in Merkle tree for partial fills
   merkleProof?: string[]; // Merkle proof for partial fill secret verification
+  merkleIndex?: number; // Index in Merkle tree (for gasless partial fills)
+  partialSecret?: string; // The actual secret for this partial fill
+  actualEscrowId?: string; // The real escrow ID for partial fills (keccak256(baseOrderId + fillIndex))
   sourceChainTxHash?: string;
   destChainTxHash?: string;
   status: 'PENDING' | 'LOCKED' | 'COMPLETED' | 'FAILED';

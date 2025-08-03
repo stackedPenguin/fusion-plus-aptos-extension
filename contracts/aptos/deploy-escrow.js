@@ -24,7 +24,7 @@ async function deployEscrow() {
       const accountData = JSON.parse(fs.readFileSync(path.join(__dirname, 'new-escrow-account.json'), 'utf8'));
       // Use the first account that was generated
       privateKey = 'ed25519-priv-0x6f96d196c83b19ed4d051edf71ebb4782443c429ef82ae73cb7a9eb08e339c59';
-      console.log('Using account:', '0x9835a69eb93fd4d86c975429a511ed3b2900becbcbb4258f7da57cc253ab9fca');
+      console.log('Using account:', '0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8');
     } catch (err) {
       throw new Error('Could not read new account details');
     }

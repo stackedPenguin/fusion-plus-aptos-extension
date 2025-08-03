@@ -1,0 +1,9 @@
+{
+  "contract": "FusionPlusGaslessEscrowV2",
+  "address": "0x704EBa209E391FEBa4F1FCfdFdb852760D068d18",
+  "network": "sepolia",
+  "deployer": "0x8F90dE323b5E77EB1dDa97410110d2B27892AECF",
+  "deployedAt": "2025-08-03T08:54:16.224Z",
+  "blockNumber": 8902685,
+  "note": "Fixed nonce increment bug - nonce now incremented AFTER signature verification"
+}

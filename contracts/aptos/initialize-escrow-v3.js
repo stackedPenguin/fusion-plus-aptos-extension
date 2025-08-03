@@ -5,8 +5,8 @@ async function main() {
   const config = new AptosConfig({ network: Network.TESTNET });
   const aptos = new Aptos(config);
 
-  // Load deployer account - use the funded account
-  const privateKeyHex = '6f96d196c83b19ed4d051edf71ebb4782443c429ef82ae73cb7a9eb08e339c59';
+  // Load deployer account - use the account that deployed the modules
+  const privateKeyHex = '7c7ac1c8279011232286dd94ad54b3fc17a37ee1f7df3b9d337825dfb64b0a2b';
   const privateKey = new Ed25519PrivateKey(privateKeyHex);
   const account = Account.fromPrivateKey({ privateKey });
 
@@ -16,12 +16,12 @@ async function main() {
   const RESOLVER_ADDRESS = '0x2d61a25dfac21604c5eabda303c9cc9f367d6c17b9c18df424d57fee4b4a9532';
 
   try {
-    // Initialize escrow_v2
-    console.log('\nInitializing escrow_v2...');
+    // Initialize escrow_v3
+    console.log('\nInitializing escrow_v3...');
     const initTx = await aptos.transaction.build.simple({
       sender: account.accountAddress,
       data: {
-        function: `${MODULE_ADDRESS}::escrow_v2::initialize`,
+        function: `${MODULE_ADDRESS}::escrow_v3::initialize`,
         typeArguments: [],
         functionArguments: []
       }
@@ -33,14 +33,14 @@ async function main() {
     });
 
     await aptos.waitForTransaction({ transactionHash: initCommittedTx.hash });
-    console.log('✅ Escrow V2 initialized:', initCommittedTx.hash);
+    console.log('✅ Escrow V3 initialized:', initCommittedTx.hash);
 
     // Add resolver to whitelist
     console.log('\nAdding resolver to whitelist...');
     const addResolverTx = await aptos.transaction.build.simple({
       sender: account.accountAddress,
       data: {
-        function: `${MODULE_ADDRESS}::escrow_v2::add_authorized_resolver`,
+        function: `${MODULE_ADDRESS}::escrow_v3::add_authorized_resolver`,
         typeArguments: [],
         functionArguments: [RESOLVER_ADDRESS]
       }
@@ -54,7 +54,7 @@ async function main() {
     await aptos.waitForTransaction({ transactionHash: addResolverCommittedTx.hash });
     console.log('✅ Resolver added to whitelist:', addResolverCommittedTx.hash);
 
-    console.log('\n✅ Escrow V2 setup complete!');
+    console.log('\n✅ Escrow V3 setup complete!');
     console.log(`Module deployed at: ${MODULE_ADDRESS}`);
     console.log(`Resolver whitelisted: ${RESOLVER_ADDRESS}`);
 

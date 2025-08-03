@@ -1,0 +1,13 @@
+{
+  "address": "0x3f2f1a3d325df4561b8216251aec6dc6c1a6bb3ee8d0ed9004a51c73a857d9a8",
+  "privateKey": "0x7c7ac1c8279011232286dd94ad54b3fc17a37ee1f7df3b9d337825dfb64b0a2b",
+  "publicKey": "0xe2587f2294ef148a8ed78befac252f7936fd7f7a370ca6f2ea0f1b305b357290",
+  "network": "testnet",
+  "modules": [
+    "fusion_plus_partial_fill",
+    "escrow",
+    "escrow_v2",
+    "escrow_v3",
+    "layerzero_adapter"
+  ]
+}

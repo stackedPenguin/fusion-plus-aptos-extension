@@ -9,6 +9,7 @@ export class ChainServiceSimple {
     provider: ethers.Provider;
     signer: ethers.Wallet;
     escrowAddress: string;
+    gaslessEscrowAddress: string;
     layerZeroAdapter?: string;
   };
   private aptos: AptosChainServiceV2;
@@ -22,6 +23,7 @@ export class ChainServiceSimple {
       provider: ethProvider,
       signer: ethSigner,
       escrowAddress: process.env.ETHEREUM_ESCROW_ADDRESS!,
+      gaslessEscrowAddress: process.env.ETHEREUM_GASLESS_ESCROW_ADDRESS || '0x0000000000000000000000000000000000000000',
       layerZeroAdapter: process.env.LAYERZERO_ADAPTER_ADDRESS
     };
 
@@ -33,6 +35,95 @@ export class ChainServiceSimple {
       console.error('Failed to initialize Aptos chain service:', error);
       throw error;
     }
+  }
+
+  async createPartialFillOrder(baseOrderId: string, depositor: string, beneficiary: string, token: string, totalAmount: string, merkleRoot: string, numFills: number, timelock: number, deadline: number, signature: {v: number, r: string, s: string}): Promise<string> {
+    console.log('\n🔥 Creating gasless partial fill order on Ethereum...');
+    console.log(`   📋 Base Order ID: ${baseOrderId}`);
+    console.log(`   👤 Depositor: ${depositor}`);
+    console.log(`   🎯 Beneficiary: ${beneficiary}`);
+    console.log(`   💰 Total Amount: ${ethers.formatEther(totalAmount)} WETH`);
+    console.log(`   🌳 Merkle Root: ${merkleRoot}`);
+    console.log(`   📊 Number of fills: ${numFills}`);
+
+    const gaslessEscrowAbi = [
+      'function createPartialFillOrderWithSignature((bytes32 baseOrderId, address depositor, address beneficiary, address token, uint256 totalAmount, bytes32 merkleRoot, uint256 numFills, uint256 timelock, uint256 nonce, uint256 deadline), uint8 v, bytes32 r, bytes32 s)'
+    ];
+    
+    const gaslessContract = new ethers.Contract(
+      this.ethereum.gaslessEscrowAddress, 
+      gaslessEscrowAbi, 
+      this.ethereum.signer
+    );
+
+    // Get the nonce for this depositor
+    const nonceAbi = ['function getNonce(address user) view returns (uint256)'];
+    const nonceContract = new ethers.Contract(this.ethereum.gaslessEscrowAddress, nonceAbi, this.ethereum.provider);
+    const nonce = await nonceContract.getNonce(depositor);
+
+    const params = {
+      baseOrderId,
+      depositor,
+      beneficiary,
+      token,
+      totalAmount,
+      merkleRoot,
+      numFills,
+      timelock,
+      nonce: nonce.toString(),
+      deadline
+    };
+
+    console.log(`   📝 Creating partial fill order with nonce: ${nonce}`);
+    
+    const tx = await gaslessContract.createPartialFillOrderWithSignature(
+      params,
+      signature.v,
+      signature.r,
+      signature.s
+    );
+
+    console.log(`   📤 Partial fill order transaction sent: ${tx.hash}`);
+    await tx.wait();
+    console.log(`   ✅ Partial fill order created successfully!`);
+    
+    return tx.hash;
+  }
+
+  async createPartialFillEscrow(baseOrderId: string, fillIndex: number, amount: string, hashlock: string, merkleProof: string[], safetyDeposit: string): Promise<string> {
+    console.log('\n🧩 Creating partial fill escrow on Ethereum...');
+    console.log(`   📋 Base Order ID: ${baseOrderId}`);
+    console.log(`   📊 Fill Index: ${fillIndex}`);
+    console.log(`   💰 Amount: ${ethers.formatEther(amount)} WETH`);
+    console.log(`   🔒 Hashlock: ${hashlock}`);
+    console.log(`   🌳 Merkle Proof: [${merkleProof.join(', ')}]`);
+
+    const gaslessEscrowAbi = [
+      'function createPartialFillEscrow(bytes32 baseOrderId, uint256 fillIndex, uint256 amount, bytes32 hashlock, bytes32[] calldata merkleProof) payable'
+    ];
+    
+    const gaslessContract = new ethers.Contract(
+      this.ethereum.gaslessEscrowAddress, 
+      gaslessEscrowAbi, 
+      this.ethereum.signer
+    );
+
+    console.log(`   💸 Safety deposit: ${ethers.formatEther(safetyDeposit)} ETH`);
+    
+    const tx = await gaslessContract.createPartialFillEscrow(
+      baseOrderId,
+      fillIndex,
+      amount,
+      hashlock,
+      merkleProof,
+      { value: safetyDeposit }
+    );
+
+    console.log(`   📤 Partial fill escrow transaction sent: ${tx.hash}`);
+    await tx.wait();
+    console.log(`   ✅ Partial fill escrow created successfully!`);
+    
+    return tx.hash;
   }
 
   async createEthereumEscrow(
@@ -331,7 +422,21 @@ export class ChainServiceSimple {
     timelock: number,
     safetyDeposit: string
   ): Promise<string> {
+    // For regular escrows where resolver is depositor, use createEscrow
+    // For delegated escrows where user is depositor, use createEscrowDelegated
     return this.aptos.createEscrow(escrowId, depositor, beneficiary, amount, hashlock, timelock, safetyDeposit);
+  }
+  
+  async createAptosEscrowDelegated(
+    escrowId: Uint8Array,
+    depositor: string,
+    beneficiary: string,
+    amount: string,
+    hashlock: Uint8Array,
+    timelock: number,
+    safetyDeposit: string
+  ): Promise<string> {
+    return this.aptos.createEscrowDelegated(escrowId, depositor, beneficiary, amount, hashlock, timelock, safetyDeposit);
   }
 
   async withdrawAptosEscrow(escrowId: Uint8Array, secret: Uint8Array): Promise<string> {
