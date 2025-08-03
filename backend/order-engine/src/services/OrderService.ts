@@ -82,20 +82,41 @@ export class OrderService extends EventEmitter {
     order.fills.push(newFill);
     order.updatedAt = new Date();
 
-    // Update filled amount
-    const totalFilled = order.fills.reduce((sum, f) => {
-      return (BigInt(sum) + BigInt(f.amount)).toString();
-    }, '0');
-    order.filledAmount = totalFilled;
-
-    // Calculate and update filled percentage
-    const filledPercentage = Number((BigInt(totalFilled) * BigInt(100)) / BigInt(order.fromAmount));
-    order.filledPercentage = filledPercentage;
+    // Update filled amount and percentage
+    // For cross-chain swaps, we need to track by fill percentage, not raw amounts
+    if (order.fills.length > 0) {
+      // Check if this is a cross-chain swap with different token decimals
+      const isCrossChain = order.fromChain !== order.toChain;
+      
+      if (isCrossChain && order.fills.some(f => (f as any).fillPercentage !== undefined)) {
+        // Use fill percentages for cross-chain swaps
+        const totalFillPercentage = order.fills.reduce((sum, f) => {
+          return sum + ((f as any).fillPercentage || 0);
+        }, 0);
+        order.filledPercentage = Math.min(totalFillPercentage, 100);
+        
+        // Calculate filled amount as percentage of fromAmount
+        order.filledAmount = (BigInt(order.fromAmount) * BigInt(Math.floor(order.filledPercentage)) / BigInt(100)).toString();
+      } else {
+        // Use raw amounts for same-chain swaps or legacy fills
+        const totalFilled = order.fills.reduce((sum, f) => {
+          return (BigInt(sum) + BigInt(f.amount)).toString();
+        }, '0');
+        order.filledAmount = totalFilled;
+        
+        // Calculate percentage from amounts
+        const filledPercentage = Number((BigInt(totalFilled) * BigInt(100)) / BigInt(order.fromAmount));
+        order.filledPercentage = filledPercentage;
+      }
+    } else {
+      order.filledAmount = '0';
+      order.filledPercentage = 0;
+    }
 
     // Update order status
-    if (totalFilled === order.fromAmount) {
+    if (order.filledAmount === order.fromAmount) {
       order.status = OrderStatus.FILLED;
-    } else if (totalFilled !== '0') {
+    } else if (order.filledAmount !== '0') {
       order.status = OrderStatus.PARTIALLY_FILLED;
     }
 

@@ -1,0 +1,217 @@
+.dutch-auction-progress {
+  background: rgba(63, 140, 255, 0.05);
+  border: 1px solid rgba(63, 140, 255, 0.2);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  animation: fadeIn 0.3s ease;
+}
+
+.auction-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.auction-header h3 {
+  margin: 0;
+  color: #3f8cff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.auction-timer {
+  background: rgba(255, 152, 0, 0.1);
+  color: #ff9800;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.auction-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metric-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.rate-value {
+  color: #1dc872;
+}
+
+.auction-progress-bar {
+  position: relative;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.auction-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3f8cff 0%, #1dc872 100%);
+  transition: width 1s linear;
+}
+
+.progress-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.resolver-criteria {
+  margin-top: 24px;
+}
+
+.resolver-criteria h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.resolver-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.resolver-status-item {
+  background: rgba(13, 13, 15, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 12px;
+  transition: all 0.3s ease;
+}
+
+.resolver-status-item.active {
+  border-color: rgba(29, 200, 114, 0.3);
+  background: rgba(29, 200, 114, 0.05);
+}
+
+.resolver-status-item.filled {
+  border-color: rgba(76, 175, 80, 0.3);
+  background: rgba(76, 175, 80, 0.05);
+}
+
+.resolver-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resolver-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.resolver-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status-badge.filled {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+.status-badge.ready {
+  background: rgba(29, 200, 114, 0.2);
+  color: #1dc872;
+}
+
+.status-badge.waiting {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.resolver-details {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.strategy {
+  background: rgba(63, 140, 255, 0.1);
+  color: #3f8cff;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.fill-range,
+.condition {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.resolver-progress {
+  margin-top: 8px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.resolver-progress-bar {
+  height: 100%;
+  width: 100%;
+  transition: all 0.3s ease;
+}
+
+.auction-explanation {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.auction-explanation p {
+  margin: 4px 0;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

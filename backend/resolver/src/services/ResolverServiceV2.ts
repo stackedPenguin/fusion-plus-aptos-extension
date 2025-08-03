@@ -160,7 +160,7 @@ export class ResolverServiceV2 {
     this.ethereumAddress = process.env.ETHEREUM_RESOLVER_ADDRESS!;
     this.aptosAddress = process.env.APTOS_RESOLVER_ADDRESS!;
     this.resolverName = process.env.RESOLVER_NAME || 'Resolver-1';
-    this.resolverPort = parseInt(process.env.RESOLVER_PORT || '4001');
+    this.resolverPort = parseInt(process.env.RESOLVER_PORT || '8081');
     
     // Initialize providers for monitoring
     this.ethereumProvider = new ethers.JsonRpcProvider(
@@ -193,6 +193,33 @@ export class ResolverServiceV2 {
     this.socket.on('order:new', (order: Order) => {
       console.log('\n📋 Received order:new event');
       this.handleNewOrder(order);
+    });
+    
+    // Listen for order updates (especially for partial fills)
+    this.socket.on('order:update', (order: Order) => {
+      console.log('\n📊 Received order:update event');
+      console.log(`   Order ${order.id} is now ${(order as any).filledPercentage || 0}% filled`);
+      // Update our local copy and re-evaluate if we can fill
+      this.activeOrders.set(order.id, order);
+      if ((order.partialFillAllowed || (order as any).partialFillEnabled) && ((order as any).filledPercentage || 0) < 100) {
+        console.log('   🔄 Re-evaluating partial fill opportunity...');
+        this.handleNewOrder(order);
+      }
+    });
+    
+    // Listen for order fills to trigger re-evaluation
+    this.socket.on('order:fill', ({ order, fill }: { order: Order; fill: any }) => {
+      console.log(`\n[${this.resolverName}] 📈 Received order:fill event`);
+      console.log(`   Order ${order.id} is now ${(order as any).filledPercentage || 0}% filled`);
+      // Update our local copy with the latest order state
+      this.activeOrders.set(order.id, order);
+      // Re-evaluate if we can fill more
+      if ((order.partialFillAllowed || (order as any).partialFillEnabled) && ((order as any).filledPercentage || 0) < 100 && order.status !== 'FILLED') {
+        console.log(`   [${this.resolverName}] 🔄 Re-evaluating after fill...`);
+        setTimeout(() => {
+          this.handleNewOrder(order);
+        }, 2000); // Small delay to avoid race conditions
+      }
     });
     
     // Listen for APT escrow creation from frontend
@@ -404,9 +431,12 @@ export class ResolverServiceV2 {
       console.log(`   Order fields:`, Object.keys(order));
       console.log(`   Order secretHash:`, order.secretHash);
       console.log(`   Partial fill allowed:`, order.partialFillAllowed);
+      console.log(`   Partial fill enabled:`, (order as any).partialFillEnabled);
       
-      // Handle partial fills differently
-      if (order.partialFillAllowed) {
+      // Handle partial fills differently (check both old and new property names)
+      // Also route APT -> ETH through partial fill system for proper coordination
+      if (order.partialFillAllowed || (order as any).partialFillEnabled || 
+          (order.fromChain === 'APTOS' && order.toChain === 'ETHEREUM')) {
         return this.handlePartialFillOrder(order);
       }
       
@@ -448,44 +478,40 @@ export class ResolverServiceV2 {
         console.error(`\n${'='.repeat(60)}`);
         console.error(`⚠️  BALANCE ISSUE DETECTED - SWAP CANNOT PROCEED`);
         console.error(`${'='.repeat(60)}`);
-        console.error(`\n💡 WHY THIS SWAP FAILED:`);
-        console.error(`   The resolver needs to hold destination assets (WETH) upfront`);
-        console.error(`   to create escrows in the Fusion+ protocol.`);
-        console.error(`\n📝 WHY IT WORKED BEFORE BUT NOT NOW:`);
-        console.error(`   1. First swap consumed resolver's WETH balance`);
-        console.error(`   2. Resolver created WETH escrow for user (locked WETH)`);
-        console.error(`   3. Resolver now has insufficient WETH for new swaps`);
-        console.error(`   4. Each swap reduces available WETH until refunded`);
         
-        // Show current balances
+        // Show current balances to diagnose the issue
         try {
           const wethBalance = await this.chainService.getEthereumBalance(
             this.ethereumAddress,
             order.toToken
           );
           const ethBalance = await this.ethereumProvider.getBalance(this.ethereumAddress);
-          const requiredAmount = order.toChain === 'ETHEREUM' ? order.minToAmount : '0';
+          const requiredWethAmount = order.toChain === 'ETHEREUM' ? order.minToAmount : '0';
           
           console.error(`\n💰 RESOLVER BALANCE STATUS:`);
           console.error(`   ETH Balance:  ${ethers.formatEther(ethBalance)} ETH`);
           console.error(`   WETH Balance: ${ethers.formatEther(wethBalance)} WETH`);
-          console.error(`   Required:     ${ethers.formatEther(requiredAmount)} WETH`);
-          console.error(`   Shortfall:    ${ethers.formatEther(BigInt(requiredAmount) - wethBalance)} WETH`);
+          console.error(`   Required WETH: ${ethers.formatEther(requiredWethAmount)} WETH`);
           
-          // Estimate capacity
-          const avgSwapSize = ethers.parseEther('0.01');
-          const possibleSwaps = wethBalance / avgSwapSize;
-          console.error(`\n📊 CAPACITY: Can handle ~${possibleSwaps} more small swaps`);
+          // Determine the actual issue
+          const isEthIssue = error.message.includes('ETH balance');
+          const isWethIssue = BigInt(requiredWethAmount) > wethBalance;
           
-          console.error(`\n🔧 SOLUTION:`);
-          console.error(`   1. Fund resolver with more WETH:`);
-          console.error(`      - Run: cd /Users/wei/projects/fusion-plus-aptos-extension`);
-          console.error(`      - Run: node scripts/wrap-eth-to-weth.js`);
-          console.error(`   2. Or send WETH directly to: ${this.ethereumAddress}`);
-          console.error(`   3. For production: Implement liquidity pool system`);
+          if (isEthIssue) {
+            console.error(`\n💡 ISSUE: Insufficient ETH for gas + safety deposit`);
+            console.error(`   Need ~0.003 ETH for gas + safety deposit`);
+            console.error(`   Have: ${ethers.formatEther(ethBalance)} ETH`);
+            console.error(`\n🔧 SOLUTION: Send more ETH to resolver:`);
+            console.error(`   Address: ${this.ethereumAddress}`);
+            console.error(`   Amount needed: ~0.01 ETH`);
+          } else if (isWethIssue) {
+            console.error(`\n💡 ISSUE: Insufficient WETH for escrow creation`);
+            console.error(`   WETH shortfall: ${ethers.formatEther(BigInt(requiredWethAmount) - wethBalance)} WETH`);
+            console.error(`\n🔧 SOLUTION: Fund resolver with more WETH:`);
+            console.error(`   1. Run: node scripts/wrap-eth-to-weth.js`);
+            console.error(`   2. Or send WETH directly to: ${this.ethereumAddress}`);
+          }
           
-          console.error(`\n⏰ IMMEDIATE ACTION: Run health check`);
-          console.error(`   node scripts/monitor-resolver-health.js`);
           console.error(`${'='.repeat(60)}\n`);
         } catch (e) {
           // Ignore balance check errors
@@ -555,8 +581,7 @@ export class ResolverServiceV2 {
   }
 
   private async calculateOptimalFillPercentage(order: Order): Promise<number> {
-    // Strategy: Use Dutch auction parameters to determine fill percentage
-    // Early resolvers get better rates but must commit to larger fills
+    // Strategy: Dynamic fill based on number of active resolvers
     
     try {
       // Check our balance on destination chain
@@ -567,7 +592,61 @@ export class ResolverServiceV2 {
       const currentFillPercentage = await this.getCurrentFillPercentage(order.id);
       console.log(`   📊 Order currently ${currentFillPercentage}% filled`);
       
-      // If Dutch auction is enabled, calculate based on auction parameters
+      // Check if this resolver is in the active resolvers list
+      const activeResolvers = (order as any).activeResolvers || [];
+      const resolverIndex = this.getResolverIndex();
+      const resolverNumber = resolverIndex + 1; // Convert to 1-based
+      const resolverIdString = `resolver-${resolverNumber}`; // e.g., 'resolver-1'
+      
+      // If activeResolvers is specified, check if this resolver is included
+      if (activeResolvers.length > 0) {
+        // Check both number format and string format for compatibility
+        const isActiveResolver = activeResolvers.includes(resolverNumber) || 
+                                activeResolvers.includes(resolverNumber.toString()) ||
+                                activeResolvers.includes(resolverIdString);
+        if (!isActiveResolver) {
+          console.log(`   🚫 Resolver ${resolverNumber} (${resolverIdString}) is not in active resolvers list [${activeResolvers.join(', ')}], skipping`);
+          return 0;
+        }
+      }
+      
+      const activeResolverCount = activeResolvers.length || 3;
+      console.log(`   🤖 Active resolvers: ${activeResolvers.length > 0 ? activeResolvers.join(', ') : 'all'} (count: ${activeResolverCount})`);
+      console.log(`   🎯 This is resolver ${resolverNumber}, participating in fill`);
+      
+      // Calculate base fill percentage based on active resolvers and partial fill settings
+      let baseFillPercentage: number;
+      const partialFillEnabled = order.partialFillAllowed || (order as any).partialFillEnabled;
+      
+      if (!partialFillEnabled) {
+        // When partial fills are disabled, ONLY Resolver 1 should handle the order
+        if (resolverNumber !== 1) {
+          console.log(`   🚫 Non-partial fill order - only Resolver 1 handles these, skipping (I am Resolver ${resolverNumber})`);
+          return 0;
+        }
+        
+        // Resolver 1: Check if order is already filled
+        if (currentFillPercentage === 0) {
+          baseFillPercentage = 100; // Resolver 1 takes the entire order
+          console.log(`   💯 No partial fills - Resolver 1 fills 100%`);
+        } else {
+          console.log(`   ✅ Order already filled (${currentFillPercentage}%), skipping`);
+          return 0;
+        }
+      } else {
+        // Partial fills enabled - distribute among active resolvers
+        if (activeResolverCount === 1) {
+          baseFillPercentage = 50; // Single resolver can only fill 50%
+        } else if (activeResolverCount === 2) {
+          baseFillPercentage = 50; // Each resolver fills 50%
+        } else {
+          baseFillPercentage = Math.floor(100 / activeResolverCount); // Equal distribution
+        }
+      }
+      
+      console.log(`   📏 Base fill percentage: ${baseFillPercentage}%`);
+      
+      // If Dutch auction is enabled, use strategy-based timing
       if (order.dutchAuction?.enabled) {
         console.log(`   🇳🇱 Dutch auction enabled for this order`);
         
@@ -586,56 +665,87 @@ export class ResolverServiceV2 {
         
         // Strategy based on resolver identity
         const resolverStrategy = this.getResolverStrategy();
-        let targetFillPercentage = 25; // Default
+        let shouldFillNow = false;
         
         if (resolverStrategy === 'aggressive') {
-          // Resolver 1: Aggressive - tries to fill early for better rates
-          if (auctionStatus.percentComplete < 25) {
-            targetFillPercentage = 50; // Fill half early
-          } else {
-            targetFillPercentage = 25;
-          }
+          // Resolver 1: Aggressive - fills early
+          shouldFillNow = auctionStatus.percentComplete < 40;
         } else if (resolverStrategy === 'patient') {
           // Resolver 2: Patient - waits for better rates
-          if (auctionStatus.percentComplete > 50) {
-            targetFillPercentage = 25;
-          } else {
-            return 0; // Wait for better rate
-          }
+          shouldFillNow = auctionStatus.percentComplete > 60;
         } else {
-          // Resolver 3: Opportunistic - fills small amounts throughout
-          targetFillPercentage = 25;
+          // Resolver 3: Opportunistic - fills based on timing
+          shouldFillNow = auctionStatus.percentComplete > 30 && auctionStatus.percentComplete < 80;
+          
+          // Also react to imminent rate drops
+          if (auctionStatus.nextRateDropIn < 5) {
+            shouldFillNow = true;
+          }
         }
         
-        // Check if we can afford the target amount
-        const targetAmount = (requiredAmount * BigInt(targetFillPercentage)) / 100n;
-        if (balance < targetAmount) {
-          console.log(`   ❌ Cannot afford ${targetFillPercentage}% of the order`);
+        if (!shouldFillNow) {
+          console.log(`   ⏳ Waiting for better timing (strategy: ${resolverStrategy})`);
           return 0;
         }
-        
-        return targetFillPercentage;
       }
       
-      // Non-Dutch auction: always fill 25% for demo
-      const quarterAmount = requiredAmount / 4n;
+      // Check if we've already filled our portion
+      // For active resolver subset, we need to map our global index to active list index
+      // (resolverIndex and resolverNumber already declared above)
       
-      if (balance < quarterAmount) {
-        console.log(`   ❌ Cannot afford even 25% of the order`);
+      // Find our position in the active resolvers list
+      let activeResolverIndex = 0;
+      if (activeResolvers.length > 0) {
+        // Try to find resolver by various formats
+        activeResolverIndex = activeResolvers.indexOf(resolverNumber);
+        if (activeResolverIndex === -1) {
+          activeResolverIndex = activeResolvers.indexOf(resolverNumber.toString());
+        }
+        if (activeResolverIndex === -1) {
+          activeResolverIndex = activeResolvers.indexOf(resolverIdString);
+        }
+        if (activeResolverIndex === -1) {
+          console.log(`   ❌ Resolver ${resolverNumber} (${resolverIdString}) not found in active list, cannot fill`);
+          return 0;
+        }
+      } else {
+        activeResolverIndex = resolverIndex; // Use global index if no specific list
+      }
+      
+      let myStartFill: number;
+      let myEndFill: number;
+      
+      if (!partialFillEnabled && baseFillPercentage === 100) {
+        // Non-partial fill: first resolver gets 0-100%, others get nothing
+        myStartFill = 0;
+        myEndFill = 100;
+        console.log(`   📊 Resolver ${resolverNumber} fill range: ${myStartFill}% - ${myEndFill}% (non-partial fill)`);
+      } else {
+        // Partial fill: distribute based on resolver index
+        myStartFill = baseFillPercentage * activeResolverIndex;
+        myEndFill = baseFillPercentage * (activeResolverIndex + 1);
+        console.log(`   📊 Resolver ${resolverNumber} fill range: ${myStartFill}% - ${myEndFill}% (partial fill)`);
+      }
+      
+      // Check if it's our turn to fill based on current fill percentage
+      if (currentFillPercentage < myStartFill) {
+        console.log(`   ⏳ Waiting for earlier resolvers to fill (current: ${currentFillPercentage}%, my turn starts at: ${myStartFill}%)`);
         return 0;
       }
       
-      // Demo: Only fill once (25%) to demonstrate partial fills
-      if (currentFillPercentage > 0) {
-        console.log(`   ✅ Demo complete: Order has ${currentFillPercentage}% filled`);
-        console.log(`   📝 User can now complete the swap with this partial fill`);
-        console.log(`   💡 In production, other resolvers would compete to fill the remaining ${100 - currentFillPercentage}%`);
-        return 0; // Don't fill anymore for demo
+      if (currentFillPercentage >= myEndFill) {
+        console.log(`   ✅ Already filled our portion (current: ${currentFillPercentage}%, my portion ended at: ${myEndFill}%)`);
+        return 0;
       }
       
-      // Demo: Fill exactly 25% once
-      console.log(`   🎯 Demo: Filling 25% portion (one-time demonstration)`);
-      return 25;
+      // Check if we can afford the fill
+      const targetAmount = (requiredAmount * BigInt(baseFillPercentage)) / 100n;
+      if (balance < targetAmount) {
+        console.log(`   ❌ Cannot afford ${baseFillPercentage}% of the order`);
+        return 0;
+      }
+      
+      return baseFillPercentage;
       
     } catch (error) {
       console.error(`   ❌ Error calculating fill percentage:`, error);
@@ -1405,12 +1515,16 @@ export class ResolverServiceV2 {
           // If it's an array, convert directly to Uint8Array
           escrowIdBytes = new Uint8Array(sourceEscrowId);
           console.log('   📝 Escrow ID (array):', sourceEscrowId);
-        } else if (typeof sourceEscrowId === 'string') {
+        } else if (typeof sourceEscrowId === 'string' && sourceEscrowId.startsWith('0x')) {
           // If it's a hex string, convert to bytes
           escrowIdBytes = ethers.getBytes(sourceEscrowId);
           console.log('   📝 Escrow ID (hex):', sourceEscrowId);
+        } else if (typeof sourceEscrowId === 'object' && sourceEscrowId && 'data' in sourceEscrowId) {
+          // If it's an object with data property (from older format), extract bytes
+          escrowIdBytes = new Uint8Array((sourceEscrowId as any).data);
+          console.log('   📝 Escrow ID (object with data):', sourceEscrowId);
         } else {
-          throw new Error(`Invalid escrow ID format: ${typeof sourceEscrowId}`);
+          throw new Error(`Invalid escrow ID format: ${typeof sourceEscrowId} - ${JSON.stringify(sourceEscrowId)}`);
         }
         
         console.log('   📝 Escrow ID (bytes):', Array.from(escrowIdBytes));
@@ -2202,21 +2316,39 @@ export class ResolverServiceV2 {
       
       // Submit multi-agent transaction
       console.log('   📤 Submitting multi-agent transaction...');
-      const result = await this.chainService.submitMultiAgentTransaction(
+      const pendingTx = await this.chainService.submitMultiAgentTransaction(
         rawTxn,
         userSignature,
         feePayerSignature
       );
       
-      console.log('   ✅ Multi-agent transaction submitted:', result.hash);
+      console.log('   ✅ Multi-agent transaction submitted:', pendingTx.hash);
+      console.log('   ⏳ Waiting for transaction confirmation...');
+      
+      // Wait for transaction confirmation
+      const executedTx = await this.chainService.aptosChainService.aptos.waitForTransaction({
+        transactionHash: pendingTx.hash,
+        options: { checkSuccess: true }
+      });
+      
+      if (!executedTx.success) {
+        throw new Error(`Transaction failed: ${executedTx.vm_status}`);
+      }
+      
+      console.log('   ✅ Transaction confirmed on-chain!');
       console.log('   💳 User\'s APT has been used for escrow');
       console.log('   ⛽ Resolver paid only gas fees');
+      
+      // Convert escrow ID from byte array to hex string
+      const escrowIdHex = '0x' + signedOrder.orderMessage.escrow_id.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      console.log('   📝 Escrow ID (hex):', escrowIdHex);
+      console.log('   📝 Escrow ID (bytes):', signedOrder.orderMessage.escrow_id);
       
       // Emit success event
       this.socket.emit('escrow:source:created', {
         orderId: order.id,
-        escrowId: signedOrder.orderMessage.escrow_id,
-        transactionHash: result.hash,
+        escrowId: escrowIdHex,
+        transactionHash: pendingTx.hash,
         userFunded: true,
         gaslessForUser: true
       });
@@ -2230,14 +2362,14 @@ export class ResolverServiceV2 {
         secretHash: order.secretHash || '',
         secretIndex: 0,
         status: 'PENDING',
-        sourceEscrowId: signedOrder.orderMessage.escrow_id
+        sourceEscrowId: escrowIdHex
       };
       
       // Mark the escrow as created (user-funded)
       this.pendingSecretReveals.set(order.id, {
         order,
         fill,
-        sourceEscrowId: signedOrder.orderMessage.escrow_id,
+        sourceEscrowId: escrowIdHex,
         destinationEscrowId: '' // Will be set when destination escrow is created
       });
       
@@ -2300,7 +2432,18 @@ export class ResolverServiceV2 {
     }
     
     // Create a modified order with the partial amount for gasless escrow
-    const modifiedOrder = { ...order, fromAmount: escrowAmount };
+    const modifiedOrder = { 
+      ...order, 
+      fromAmount: escrowAmount,
+      // Update gasless data with partial amount
+      gaslessData: order.gaslessData ? {
+        ...order.gaslessData,
+        amount: escrowAmount,
+        escrowId: data.isPartialFill ? 
+          ethers.id(`${order.id}-source-${data.fillPercentage}`) : 
+          order.gaslessData.escrowId
+      } : undefined
+    };
     
     // Execute the gasless WETH escrow
     try {
@@ -2528,12 +2671,23 @@ export class ResolverServiceV2 {
 
   private getResolverStrategy(): 'aggressive' | 'patient' | 'opportunistic' {
     // Determine strategy based on resolver name/port
-    if (this.resolverName === 'Resolver-1' || this.resolverPort === 4001) {
+    if (this.resolverName === 'Resolver-1' || this.resolverPort === 8081) {
       return 'aggressive';
-    } else if (this.resolverName === 'Resolver-2' || this.resolverPort === 4002) {
+    } else if (this.resolverName === 'Resolver-2' || this.resolverPort === 8082) {
       return 'patient';
     } else {
       return 'opportunistic';
+    }
+  }
+  
+  private getResolverIndex(): number {
+    // Return 0-based index for this resolver
+    if (this.resolverName === 'Resolver-1' || this.resolverPort === 8081) {
+      return 0;
+    } else if (this.resolverName === 'Resolver-2' || this.resolverPort === 8082) {
+      return 1;
+    } else {
+      return 2;
     }
   }
 

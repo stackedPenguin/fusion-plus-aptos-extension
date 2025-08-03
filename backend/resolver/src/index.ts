@@ -1,6 +1,7 @@
 import { ResolverServiceV2 } from './services/ResolverServiceV2';
 import dotenv from 'dotenv';
 import express from 'express';
+import cors from 'cors';
 
 dotenv.config();
 
@@ -11,6 +12,9 @@ async function main() {
   // Start HTTP server for health checks
   const app = express();
   const port = process.env.RESOLVER_PORT || 3002;
+  
+  // Enable CORS for frontend
+  app.use(cors());
   
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'resolver-v2' });

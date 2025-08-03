@@ -22,6 +22,7 @@ describe('OrderService', () => {
     nonce: '1',
     signature: '0xmocksignature',
     partialFillAllowed: true,
+    partialFillEnabled: true,
     secretHashes: ['0xhash1', '0xhash2', '0xhash3']
   };
 

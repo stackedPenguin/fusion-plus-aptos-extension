@@ -141,7 +141,7 @@ export class ChainServiceSimple {
           console.log(`   💳 Resolver ETH balance: ${ethers.formatEther(resolverBalance)} ETH`);
           
           // Check if we have enough ETH for gas + safety deposit
-          const estimatedGas = ethers.parseEther('0.01'); // Rough estimate
+          const estimatedGas = ethers.parseEther('0.002'); // More realistic gas estimate
           const totalNeeded = ethers.getBigInt(safetyDeposit) + estimatedGas;
           
           if (resolverBalance < totalNeeded) {

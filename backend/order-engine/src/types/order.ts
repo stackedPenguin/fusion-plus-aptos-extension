@@ -69,10 +69,12 @@ export const CreateOrderSchema = z.object({
   deadline: z.number(),
   nonce: z.string(),
   partialFillAllowed: z.boolean().default(false),
+  partialFillEnabled: z.boolean().default(false), // New property name used by frontend
   secretHash: z.string().optional(), // User-generated secret hash for Fusion+ protocol
   secretHashes: z.array(z.string()).optional(), // For partial fills using Merkle tree
   partialFillSecrets: PartialFillSecretsSchema.optional(), // Merkle tree secrets for partial fills
   maxParts: z.number().default(4).optional(), // Max parts to split order (default: 4 for 25% each)
+  activeResolvers: z.array(z.string()).optional(), // List of active resolver IDs
   // Dutch auction configuration
   dutchAuction: DutchAuctionSchema.optional(),
   // Optional permit for automatic transfers
